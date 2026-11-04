@@ -1,0 +1,53 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               String         @id @default(uuid())
+  email            String         @unique
+  name             String
+  handle           String         @unique
+  avatarUrl        String?
+  streakDays       Int            @default(19)
+  reclaimedToday   Int            @default(760) // In seconds
+  loopsBrokenToday Int            @default(14)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  sentPauses       PauseMessage[] @relation("SentPauses")
+  receivedPauses   PauseMessage[] @relation("ReceivedPauses")
+  presencePacts    PresencePact[]
+}
+
+model PauseMessage {
+  id               String   @id @default(uuid())
+  senderId         String
+  receiverId       String
+  title            String   // e.g. "Gift of Presence", "10-Second Breath Check"
+  note             String   // Mindful intention note
+  durationSeconds  Int      // 5, 10, 15, 20, 30
+  tag              String   // "Featured", "Presence Pact", "Intervention"
+  isRead           Boolean  @default(false)
+  isCompleted      Boolean  @default(false)
+  steppedAwayEarly Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  sender           User     @relation("SentPauses", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver         User     @relation("ReceivedPauses", fields: [receiverId], references: [id], onDelete: Cascade)
+}
+
+model PresencePact {
+  id               String   @id @default(uuid())
+  userId           String
+  partnerName      String
+  durationDays     Int      @default(7)
+  status           String   @default("active") // "active", "completed", "resting"
+  createdAt        DateTime @default(now())
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

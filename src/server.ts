@@ -1,0 +1,70 @@
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import authRoutes from './routes/auth.routes';
+import inboxRoutes from './routes/inbox.routes';
+import companionRoutes from './routes/companion.routes';
+import rhythmRoutes from './routes/rhythm.routes';
+import { setupPauseSockets } from './sockets/pause.socket';
+import prisma from './config/db';
+
+dotenv.config();
+
+const app = express();
+const server = http.createServer(app);
+
+// Configure Socket.io with permissive CORS and multi-transport support for Web, Mobile, and Desktop
+export const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+});
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    app: 'Instaloop Mindful Backend',
+    version: '1.0.0',
+    philosophy: 'Anti-scroll, finite attention sovereignty',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Mount Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/inbox', inboxRoutes);
+app.use('/api/companions', companionRoutes);
+app.use('/api/rhythm', rhythmRoutes);
+
+// Setup WebSockets
+setupPauseSockets(io);
+
+// Start Server
+const PORT = process.env.PORT || 4000;
+server.listen(PORT, async () => {
+  console.log(`=================================================`);
+  console.log(`🌿 Instaloop Mindful Backend is live on port ${PORT}`);
+  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`📱 Connect physical phones on Wi-Fi: http://192.168.1.8:${PORT}`);
+  console.log(`📡 WebSocket ready for real-time presence & pauses`);
+  
+  // Test database connection non-blockingly
+  try {
+    await prisma.$connect();
+    console.log(`🗄️  Prisma Database connected successfully!`);
+  } catch (err: any) {
+    console.log(`⚠️  Database offline or pending: using resilient mindful in-memory state`);
+  }
+  
+  console.log(`=================================================`);
+});
