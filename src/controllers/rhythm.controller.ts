@@ -71,17 +71,24 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
 export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
   try {
     const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
-    const { secondsReclaimed } = req.body;
+    const { secondsReclaimed, bonsaiVitality } = req.body;
     const seconds = Number(secondsReclaimed) || 15;
 
     let user = null;
     if (userEmail) {
+      const existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
+      const prevVit = existingUser?.bonsaiVitality ?? 50;
+      const targetVit = bonsaiVitality !== undefined
+        ? Math.min(100, Math.max(10, Math.round(Number(bonsaiVitality))))
+        : Math.min(100, prevVit + 10);
+
       user = await prisma.user.update({
         where: { email: userEmail },
         data: {
           loopsBrokenToday: { increment: 1 },
           reclaimedToday: { increment: seconds },
           reelsAvoidedToday: { increment: Math.max(1, Math.round(seconds / 5)) },
+          bonsaiVitality: targetVit,
         },
       }).catch(() => null);
     }
@@ -103,17 +110,34 @@ export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
 export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
   try {
     const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
-    const { durationSeconds } = req.body;
+    const { durationSeconds, bonsaiVitality } = req.body;
     const seconds = Number(durationSeconds) || 15;
 
     let user = null;
     if (userEmail) {
+      const existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
+      const prevVit = existingUser?.bonsaiVitality ?? 50;
+      const prevReclaimed = existingUser?.reclaimedToday ?? 0;
+      const newTotalReclaimed = prevReclaimed + seconds;
+
+      let newStage = "seedling";
+      if (newTotalReclaimed >= 6000) newStage = "ancientCanopy";
+      else if (newTotalReclaimed >= 2400) newStage = "flourishingBonsai";
+      else if (newTotalReclaimed >= 900) newStage = "youngBonsai";
+      else if (newTotalReclaimed >= 300) newStage = "sprout";
+
+      const targetVit = bonsaiVitality !== undefined
+        ? Math.min(100, Math.max(10, Math.round(Number(bonsaiVitality))))
+        : Math.min(100, Math.max(10, prevVit + Math.max(5, Math.round(seconds * 1.5))));
+
       user = await prisma.user.update({
         where: { email: userEmail },
         data: {
           completedPausesToday: { increment: 1 },
           reclaimedToday: { increment: seconds },
           reelsAvoidedToday: { increment: Math.max(1, Math.round(seconds / 4)) },
+          bonsaiVitality: targetVit,
+          bonsaiStage: newStage,
         },
       }).catch(() => null);
     }
