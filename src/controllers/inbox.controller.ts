@@ -3,52 +3,23 @@ import { AuthRequest } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
 import { io } from '../server';
 
-// Default mindful seed data matching Flutter models
+// Initial gentle welcome pause for new mindful journey
 const INITIAL_MOCK_MESSAGES = [
   {
-    id: 'm1',
+    id: 'm-welcome',
     senderId: 'ai-aarya',
     senderName: 'Aarya',
     senderRole: 'AI Mindful Guide',
-    avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuD3n8mJYq9x0Z3hj1V0pKSHxokroOSrB5eRhM8UikIwPie4J7yns7ANpFY5lPJw09QYzoA1uKT9XJqpXC7-lrJOD7JTmhVaTCkNBA34M9q1k74x4lMINi1A2XeMhshEfmnaftQzJ5HSOFxspHydr1jocDZdoUuNcyBkRPPOybBK4SSkJyHO7sL7aP0Ui4QjSynCDKg_k7pcc1IL_vg3dC-83rP19WQCqxDmW3hTsn_sqMgFyYVIDMeG',
-    title: '10-Second Breath Check',
-    note: 'Drop your shoulders, inhale calm, exhale urgency.',
+    avatarUrl:
+      'https://lh3.googleusercontent.com/aida-public/AB6AXuD3n8mJYq9x0Z3hj1V0pKSHxokroOSrB5eRhM8UikIwPie4J7yns7ANpFY5lPJw09QYzoA1uKT9XJqpXC7-lrJOD7JTmhVaTCkNBA34M9q1k74x4lMINi1A2XeMhshEfmnaftQzJ5HSOFxspHydr1jocDZdoUuNcyBkRPPOybBK4SSkJyHO7sL7aP0Ui4QjSynCDKg_k7pcc1IL_vg3dC-83rP19WQCqxDmW3hTsn_sqMgFyYVIDMeG',
+    title: 'Welcome to Instaloop (10s)',
+    note: 'Welcome to your sanctuary of quietude. Take your first 10-second breath to begin building your stillness streak.',
     durationSeconds: 10,
-    tag: 'Featured',
+    tag: 'First Breath',
     isRead: false,
     isCompleted: false,
     steppedAwayEarly: false,
     timestamp: 'Just now',
-  },
-  {
-    id: 'm2',
-    senderId: 'friend-alex',
-    senderName: 'Alex Rivera',
-    senderRole: 'Friend',
-    avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAfyYJT2xMkFLSVku_3SkpcUpwAcSiWn2ni6F1Rq8hfVT_NtHiHJSG6J2HqJhu-TlQm6Pf8K-HPj7fdpjf0kjpPxo0RD_QayZWSkP2lJnvwpN1HdbonYyzCrE_lSTQn8epa6euUpIwq3pNUBfO-5wsBYsLdiM789U8EtbViuOO9i0Zjl9gy2KSjN0PDoHekJ2A0ff2oep7jWB9Ocrag9034nrkyux6b4l0wVG7nGwY-Dgjl_r_y2e7p',
-    title: 'Gift of Presence (15s)',
-    note: 'Sending you 15 seconds of undivided presence without notification clutter.',
-    durationSeconds: 15,
-    tag: 'Presence Pact',
-    isRead: false,
-    isCompleted: false,
-    steppedAwayEarly: false,
-    timestamp: '25m ago',
-  },
-  {
-    id: 'm3',
-    senderId: 'ai-kabir',
-    senderName: 'Kabir',
-    senderRole: 'Doomscroll Intervention',
-    avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAHX47poB-2bkPA2inOPdZB_AiAktHe76VyGyBOlXe_khVvRCPpe75MWgSd-7KN_3h6Ar0h1DSRDcEN2-BnZYPokBTv_qOpv-WirxwLzETLS-SWlKibH838aYqniDR7g-Pb8qW7NrCsYaTYYA3BX1QyzuoWIpMEIgqNTP-Uzfo6vju2jS1mm1taoCLCtVdd4Z01ZT2ZTT4IHHsfU7Bwug0bSwEs5QDyrTgVmrHy7ELeUK7A3fECAvg9',
-    title: 'Infinite Scroll Interruption',
-    note: 'Unclench your jaw. The algorithm has no finish line, but you can choose to stop here.',
-    durationSeconds: 15,
-    tag: 'Intervention',
-    isRead: false,
-    isCompleted: false,
-    steppedAwayEarly: false,
-    timestamp: '1h ago',
   },
 ];
 

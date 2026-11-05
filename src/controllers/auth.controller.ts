@@ -19,11 +19,11 @@ function formatUserProfile(user: any) {
     name: user.name || 'Akshar',
     handle: user.handle || '@aksharmndh9',
     avatarUrl: user.avatarUrl || DEFAULT_AVATAR,
-    streakDays: user.streakDays ?? 19,
-    reclaimedToday: user.reclaimedToday ?? 760,
-    loopsBrokenToday: user.loopsBrokenToday ?? 14,
-    reelsAvoidedToday: user.reelsAvoidedToday ?? 45,
-    completedPausesToday: user.completedPausesToday ?? 4,
+    streakDays: user.streakDays ?? 1,
+    reclaimedToday: user.reclaimedToday ?? 0,
+    loopsBrokenToday: user.loopsBrokenToday ?? 0,
+    reelsAvoidedToday: user.reelsAvoidedToday ?? 0,
+    completedPausesToday: user.completedPausesToday ?? 0,
     spiritualMantra:
       user.spiritualMantra ||
       'Resting my weary spirit in quietude. Choosing deep presence over digital chaos.',
@@ -32,8 +32,8 @@ function formatUserProfile(user: any) {
     soulAura: user.soulAura || 'Emerald',
     sacredBellSound: user.sacredBellSound || 'Tibetan Singing Bowl',
     dailyStillnessGoalMinutes: user.dailyStillnessGoalMinutes ?? 20,
-    bonsaiVitality: user.bonsaiVitality ?? 85,
-    bonsaiStage: user.bonsaiStage || 'flourishing',
+    bonsaiVitality: user.bonsaiVitality ?? 50,
+    bonsaiStage: user.bonsaiStage || 'seedling',
     updatedAt: user.updatedAt || new Date().toISOString(),
   };
 }
@@ -62,11 +62,11 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
             name: userName,
             handle: userHandle,
             avatarUrl: avatarUrl || DEFAULT_AVATAR,
-            streakDays: 19,
-            reclaimedToday: 760,
-            loopsBrokenToday: 14,
-            reelsAvoidedToday: 45,
-            completedPausesToday: 4,
+            streakDays: 1,
+            reclaimedToday: 0,
+            loopsBrokenToday: 0,
+            reelsAvoidedToday: 0,
+            completedPausesToday: 0,
             spiritualMantra:
               'Resting my weary spirit in quietude. Choosing deep presence over digital chaos.',
             spiritualSeason: 'Season of Sacred Healing',
@@ -74,15 +74,15 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
             soulAura: 'Emerald',
             sacredBellSound: 'Tibetan Singing Bowl',
             dailyStillnessGoalMinutes: 20,
-            bonsaiVitality: 85,
-            bonsaiStage: 'flourishing',
+            bonsaiVitality: 50,
+            bonsaiStage: 'seedling',
           },
         })
         .catch(() => null);
     } else {
       // User exists - update avatar or name if provided
       const updateData: any = {};
-      if (avatarUrl && avatarUrl.trim().isNotEmpty) updateData.avatarUrl = avatarUrl.trim();
+      if (avatarUrl && avatarUrl.trim().length > 0) updateData.avatarUrl = avatarUrl.trim();
       if (name && name.trim().length > 0) updateData.name = name.trim();
       if (handle && handle.trim().length > 0) updateData.handle = handle.trim();
 

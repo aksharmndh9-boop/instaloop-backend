@@ -27,23 +27,27 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
       }).catch(() => null);
     }
 
-    const reclaimedSeconds = user?.reclaimedToday ?? 760;
-    const streakDays = user?.streakDays ?? 19;
-    const loopsBroken = user?.loopsBrokenToday ?? 14;
+    const reclaimedSeconds = user?.reclaimedToday ?? 0;
+    const streakDays = user?.streakDays ?? 1;
+    const loopsBroken = user?.loopsBrokenToday ?? 0;
     const reelsAvoided = user?.reelsAvoidedToday ?? Math.round(reclaimedSeconds * 2.5);
-    const completedPauses = user?.completedPausesToday ?? 4;
+    const completedPauses = user?.completedPausesToday ?? 0;
     const dailyStillnessGoalMinutes = user?.dailyStillnessGoalMinutes ?? 20;
-    const bonsaiVitality = user?.bonsaiVitality ?? 85;
-    const bonsaiStage = user?.bonsaiStage || 'flourishing';
+    const bonsaiVitality = user?.bonsaiVitality ?? 50;
+    const bonsaiStage = user?.bonsaiStage || 'seedling';
+
+    const progressVal = dailyStillnessGoalMinutes > 0
+      ? Math.min(1.0, reclaimedSeconds / (dailyStillnessGoalMinutes * 60))
+      : 0.0;
 
     const weeklyBars = [
-      { day: 'M', val: 0.55, sec: '70s', isToday: false },
-      { day: 'T', val: 0.80, sec: '110s', isToday: false },
-      { day: 'W', val: 0.35, sec: '45s', isToday: false },
-      { day: 'T', val: 0.70, sec: '95s', isToday: false },
-      { day: 'F', val: 0.92, sec: '130s', isToday: false },
-      { day: 'S', val: 0.45, sec: '60s', isToday: false },
-      { day: 'Sun', val: 0.75, sec: '105s', isToday: true },
+      { day: 'M', val: 0.0, sec: '0s', isToday: false },
+      { day: 'T', val: 0.0, sec: '0s', isToday: false },
+      { day: 'W', val: 0.0, sec: '0s', isToday: false },
+      { day: 'T', val: 0.0, sec: '0s', isToday: false },
+      { day: 'F', val: 0.0, sec: '0s', isToday: false },
+      { day: 'S', val: 0.0, sec: '0s', isToday: false },
+      { day: 'Today', val: progressVal, sec: `${reclaimedSeconds}s`, isToday: true },
     ];
 
     return res.json({

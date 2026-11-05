@@ -13,19 +13,19 @@ model User {
   name                       String
   handle                     String         @unique
   avatarUrl                  String?
-  streakDays                 Int            @default(19)
-  reclaimedToday             Int            @default(760) // In seconds
-  loopsBrokenToday           Int            @default(14)
-  reelsAvoidedToday          Int            @default(45)
-  completedPausesToday       Int            @default(4)
+  streakDays                 Int            @default(1)
+  reclaimedToday             Int            @default(0) // In seconds - starts from scratch for new user
+  loopsBrokenToday           Int            @default(0)
+  reelsAvoidedToday          Int            @default(0)
+  completedPausesToday       Int            @default(0)
   spiritualMantra            String?        @default("Resting my weary spirit in quietude. Choosing deep presence over digital chaos.")
   spiritualSeason            String?        @default("Season of Sacred Healing")
   soulPresenceState          String?        @default("Healing & Resting")
   soulAura                   String?        @default("Emerald")
   sacredBellSound            String?        @default("Tibetan Singing Bowl")
   dailyStillnessGoalMinutes  Int            @default(20)
-  bonsaiVitality             Int            @default(85)
-  bonsaiStage                String         @default("flourishing")
+  bonsaiVitality             Int            @default(50)
+  bonsaiStage                String         @default("seedling")
   createdAt                  DateTime       @default(now())
   updatedAt                  DateTime       @updatedAt
 
