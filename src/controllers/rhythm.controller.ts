@@ -131,12 +131,21 @@ export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
 
 export const getGeminiRhythmInsight = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.id || 'demo-elena-vance-id';
+    const userEmail = (req.body?.email as string)?.toLowerCase()?.trim() || req.user?.email;
+    const userId = req.user?.id || 'usr-mindful';
     const { mood } = req.body;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    }).catch(() => null);
+    let user: any = null;
+    if (userEmail) {
+      user = await prisma.user.findUnique({
+        where: { email: userEmail },
+      }).catch(() => null);
+    }
+    if (!user && userId) {
+      user = await prisma.user.findUnique({
+        where: { id: userId },
+      }).catch(() => null);
+    }
 
     const reclaimedSeconds = user?.reclaimedToday || 760;
     const streakDays = user?.streakDays || 19;

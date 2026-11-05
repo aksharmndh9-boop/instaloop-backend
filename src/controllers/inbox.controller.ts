@@ -27,7 +27,7 @@ let inMemoryMessages = [...INITIAL_MOCK_MESSAGES];
 
 export const getInbox = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.id || 'demo-elena-vance-id';
+    const userId = req.user?.id || 'usr-mindful';
 
     // Attempt DB fetch if connected
     const dbMessages = await prisma.pauseMessage.findMany({
@@ -65,8 +65,8 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
 export const sendPause = async (req: AuthRequest, res: Response) => {
   try {
     const { receiverId, title, note, durationSeconds, tag } = req.body;
-    const senderId = req.body.senderId || req.user?.id || 'demo-elena-vance-id';
-    const senderName = req.body.senderName || req.user?.handle || 'Elena Vance';
+    const senderId = req.body.senderId || req.user?.id || 'usr-mindful';
+    const senderName = req.body.senderName || req.user?.name || req.user?.handle || 'Mindful Friend';
     const senderRole = req.body.senderRole || 'Presence Sovereign';
     const avatarUrl =
       req.body.senderAvatarUrl ||
