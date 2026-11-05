@@ -21,7 +21,7 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
         where: { email: userEmail },
       }).catch(() => null);
     }
-    if (!user && userId && userId !== 'demo-elena-vance-id') {
+    if (!user && userId) {
       user = await prisma.user.findUnique({
         where: { id: userId },
       }).catch(() => null);

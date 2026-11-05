@@ -149,7 +149,7 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
         .catch(() => null);
     }
 
-    if (!user && userId && userId !== 'demo-elena-vance-id') {
+    if (!user && userId) {
       user = await prisma.user
         .findUnique({
           where: { id: userId },

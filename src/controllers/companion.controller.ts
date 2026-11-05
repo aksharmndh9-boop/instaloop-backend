@@ -336,22 +336,26 @@ Respond ONLY with valid JSON in this exact format:
     };
 
     // Save to database if Prisma is connected
-    prisma.pauseMessage
-      .create({
-        data: {
-          senderId: companion.id,
-          receiverId: userId || 'demo-elena-vance-id',
-          title: newPause.title,
-          note: newPause.note,
-          durationSeconds: newPause.durationSeconds,
-          tag: newPause.tag,
-        },
-      })
-      .catch(() => {});
+    if (userId) {
+      prisma.pauseMessage
+        .create({
+          data: {
+            senderId: companion.id,
+            receiverId: userId,
+            title: newPause.title,
+            note: newPause.note,
+            durationSeconds: newPause.durationSeconds,
+            tag: newPause.tag,
+          },
+        })
+        .catch(() => {});
+    }
 
     // Broadcast live over WebSockets so active clients receive it instantly with sound
     if (io) {
-      io.to(userId || 'demo-elena-vance-id').emit('new_pause_received', newPause);
+      if (userId) {
+        io.to(userId).emit('new_pause_received', newPause);
+      }
       io.emit('new_pause_received', newPause);
     }
 
