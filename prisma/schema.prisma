@@ -8,16 +8,26 @@ generator client {
 }
 
 model User {
-  id               String         @id @default(uuid())
-  email            String         @unique
-  name             String
-  handle           String         @unique
-  avatarUrl        String?
-  streakDays       Int            @default(19)
-  reclaimedToday   Int            @default(760) // In seconds
-  loopsBrokenToday Int            @default(14)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  id                         String         @id @default(uuid())
+  email                      String         @unique
+  name                       String
+  handle                     String         @unique
+  avatarUrl                  String?
+  streakDays                 Int            @default(19)
+  reclaimedToday             Int            @default(760) // In seconds
+  loopsBrokenToday           Int            @default(14)
+  reelsAvoidedToday          Int            @default(45)
+  completedPausesToday       Int            @default(4)
+  spiritualMantra            String?        @default("Resting my weary spirit in quietude. Choosing deep presence over digital chaos.")
+  spiritualSeason            String?        @default("Season of Sacred Healing")
+  soulPresenceState          String?        @default("Healing & Resting")
+  soulAura                   String?        @default("Emerald")
+  sacredBellSound            String?        @default("Tibetan Singing Bowl")
+  dailyStillnessGoalMinutes  Int            @default(20)
+  bonsaiVitality             Int            @default(85)
+  bonsaiStage                String         @default("flourishing")
+  createdAt                  DateTime       @default(now())
+  updatedAt                  DateTime       @updatedAt
 
   sentPauses       PauseMessage[] @relation("SentPauses")
   receivedPauses   PauseMessage[] @relation("ReceivedPauses")

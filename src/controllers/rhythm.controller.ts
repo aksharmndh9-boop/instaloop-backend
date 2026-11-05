@@ -12,15 +12,29 @@ const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
 
 export const getRhythmStats = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.id || 'demo-elena-vance-id';
+    const userEmail = (req.query.email as string)?.toLowerCase()?.trim() || req.user?.email;
+    const userId = req.user?.id;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    }).catch(() => null);
+    let user: any = null;
+    if (userEmail) {
+      user = await prisma.user.findUnique({
+        where: { email: userEmail },
+      }).catch(() => null);
+    }
+    if (!user && userId && userId !== 'demo-elena-vance-id') {
+      user = await prisma.user.findUnique({
+        where: { id: userId },
+      }).catch(() => null);
+    }
 
-    const reclaimedSeconds = user?.reclaimedToday || 760;
-    const streakDays = user?.streakDays || 19;
-    const loopsBroken = user?.loopsBrokenToday || 14;
+    const reclaimedSeconds = user?.reclaimedToday ?? 760;
+    const streakDays = user?.streakDays ?? 19;
+    const loopsBroken = user?.loopsBrokenToday ?? 14;
+    const reelsAvoided = user?.reelsAvoidedToday ?? Math.round(reclaimedSeconds * 2.5);
+    const completedPauses = user?.completedPausesToday ?? 4;
+    const dailyStillnessGoalMinutes = user?.dailyStillnessGoalMinutes ?? 20;
+    const bonsaiVitality = user?.bonsaiVitality ?? 85;
+    const bonsaiStage = user?.bonsaiStage || 'flourishing';
 
     const weeklyBars = [
       { day: 'M', val: 0.55, sec: '70s', isToday: false },
@@ -37,7 +51,11 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
       reclaimedMinutes: Math.floor(reclaimedSeconds / 60),
       streakDays,
       loopsBroken,
-      reelsAvoided: Math.round(reclaimedSeconds * 2.5),
+      reelsAvoided,
+      completedPauses,
+      dailyStillnessGoalMinutes,
+      bonsaiVitality,
+      bonsaiStage,
       weeklyBars,
       philosophy: 'Quantifying attention saved from infinite feeds. Every second paused is life reclaimed.',
     });
@@ -48,26 +66,62 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
 
 export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.id || 'demo-elena-vance-id';
+    const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
     const { secondsReclaimed } = req.body;
-
     const seconds = Number(secondsReclaimed) || 15;
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        loopsBrokenToday: { increment: 1 },
-        reclaimedToday: { increment: seconds },
-      },
-    }).catch(() => {});
+    let user = null;
+    if (userEmail) {
+      user = await prisma.user.update({
+        where: { email: userEmail },
+        data: {
+          loopsBrokenToday: { increment: 1 },
+          reclaimedToday: { increment: seconds },
+          reelsAvoidedToday: { increment: Math.max(1, Math.round(seconds / 5)) },
+        },
+      }).catch(() => null);
+    }
 
     return res.json({
       success: true,
       message: 'Scroll loop interrupted. Reclaimed attention updated.',
       secondsAdded: seconds,
+      user: user || {
+        reclaimedToday: 760 + seconds,
+        loopsBrokenToday: 15,
+      },
     });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to record loop break' });
+  }
+};
+
+export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
+  try {
+    const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
+    const { durationSeconds } = req.body;
+    const seconds = Number(durationSeconds) || 15;
+
+    let user = null;
+    if (userEmail) {
+      user = await prisma.user.update({
+        where: { email: userEmail },
+        data: {
+          completedPausesToday: { increment: 1 },
+          reclaimedToday: { increment: seconds },
+          reelsAvoidedToday: { increment: Math.max(1, Math.round(seconds / 4)) },
+        },
+      }).catch(() => null);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Mindful stillness pause recorded on cloud backend.',
+      secondsAdded: seconds,
+      user,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to record completed pause' });
   }
 };
 

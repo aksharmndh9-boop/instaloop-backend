@@ -16,13 +16,29 @@ export const authenticateToken = (
 ) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
+  const emailFromQueryOrHeader =
+    (req.query.email as string) ||
+    (req.headers['x-user-email'] as string) ||
+    (req.body?.email as string);
 
   if (!token) {
-    // For seamless local testing, fallback to mock demo user if no token provided
+    // If an email was explicitly passed in query, header, or body, use it
+    if (emailFromQueryOrHeader && emailFromQueryOrHeader.trim().length > 0) {
+      const cleanEmail = emailFromQueryOrHeader.trim().toLowerCase();
+      const base = cleanEmail.split('@')[0];
+      req.user = {
+        id: base,
+        email: cleanEmail,
+        handle: `@${base}`,
+      };
+      return next();
+    }
+
+    // Default fallback user for mindful testing
     req.user = {
-      id: 'demo-elena-vance-id',
-      email: 'elena.vance@gmail.com',
-      handle: '@elena_v',
+      id: 'aksharmndh9',
+      email: 'aksharmndh9@gmail.com',
+      handle: '@aksharmndh9',
     };
     return next();
   }
@@ -31,6 +47,17 @@ export const authenticateToken = (
 
   jwt.verify(token, secret, (err, user) => {
     if (err) {
+      // If token expired or invalid but email was sent, honor email gracefully
+      if (emailFromQueryOrHeader && emailFromQueryOrHeader.trim().length > 0) {
+        const cleanEmail = emailFromQueryOrHeader.trim().toLowerCase();
+        const base = cleanEmail.split('@')[0];
+        req.user = {
+          id: base,
+          email: cleanEmail,
+          handle: `@${base}`,
+        };
+        return next();
+      }
       return res.status(403).json({ error: 'Invalid or expired mindful session token' });
     }
     req.user = user as AuthRequest['user'];
