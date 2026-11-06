@@ -32,6 +32,22 @@ model User {
   sentPauses       PauseMessage[] @relation("SentPauses")
   receivedPauses   PauseMessage[] @relation("ReceivedPauses")
   presencePacts    PresencePact[]
+  friendshipsInitiated Friendship[] @relation("FriendshipRequester")
+  friendshipsReceived  Friendship[] @relation("FriendshipReceiver")
+}
+
+model Friendship {
+  id          String   @id @default(uuid())
+  requesterId String
+  receiverId  String
+  status      String   @default("pending") // "pending", "accepted", "declined"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requester   User     @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver    User     @relation("FriendshipReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
 }
 
 model PauseMessage {

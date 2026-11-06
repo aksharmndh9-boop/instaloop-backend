@@ -7,6 +7,7 @@ import authRoutes from './routes/auth.routes';
 import inboxRoutes from './routes/inbox.routes';
 import companionRoutes from './routes/companion.routes';
 import rhythmRoutes from './routes/rhythm.routes';
+import friendsRoutes from './routes/friends.routes';
 import { setupPauseSockets } from './sockets/pause.socket';
 import prisma from './config/db';
 
@@ -45,6 +46,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/inbox', inboxRoutes);
 app.use('/api/companions', companionRoutes);
 app.use('/api/rhythm', rhythmRoutes);
+app.use('/api/friends', friendsRoutes);
 
 // Setup WebSockets
 setupPauseSockets(io);
