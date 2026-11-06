@@ -9,16 +9,19 @@ const JWT_SECRET = process.env.JWT_SECRET || 'instaloop_mindful_sovereign_secret
 // Resilient In-Memory Profile Cache to guarantee 100% uptime even during database spin-ups
 const inMemoryProfiles = new Map<string, any>();
 
-const DEFAULT_AVATAR =
-  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150';
+const DEFAULT_AVATAR = '';
 
 function formatUserProfile(user: any) {
+  let av = (user.avatarUrl && typeof user.avatarUrl === 'string') ? user.avatarUrl.trim() : '';
+  if (av.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde')) {
+    av = '';
+  }
   return {
     id: user.id || 'usr-default',
     email: user.email || 'aksharmndh9@gmail.com',
     name: user.name || 'Akshar',
     handle: user.handle || '@aksharmndh9',
-    avatarUrl: user.avatarUrl || DEFAULT_AVATAR,
+    avatarUrl: av,
     streakDays: user.streakDays ?? 1,
     reclaimedToday: user.reclaimedToday ?? 0,
     loopsBrokenToday: user.loopsBrokenToday ?? 0,
@@ -62,13 +65,18 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
       .catch(() => null);
 
     if (!user) {
+      // First-time login: profile picture is blank initially!
+      const initialAvatar = (avatarUrl && typeof avatarUrl === 'string' && avatarUrl.trim().length > 0 && !avatarUrl.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde'))
+        ? avatarUrl.trim()
+        : '';
+
       user = await prisma.user
         .create({
           data: {
             email: userEmail,
             name: userName,
             handle: userHandle,
-            avatarUrl: avatarUrl || DEFAULT_AVATAR,
+            avatarUrl: initialAvatar,
             streakDays: 1,
             reclaimedToday: 0,
             loopsBrokenToday: 0,
@@ -92,7 +100,21 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
       // If user logs in multiple times on the SAME day, preserve all metrics!
       // If user logs in on a NEW day, reset daily metrics to 0 and advance streak!
       const updateData: any = {};
-      if (avatarUrl && avatarUrl.trim().length > 0) updateData.avatarUrl = avatarUrl.trim();
+
+      // Backend remembers the selected avatar!
+      // If user already has an avatarUrl saved in the database, DO NOT overwrite it.
+      const currentDbAvatar = (user.avatarUrl && typeof user.avatarUrl === 'string' && !user.avatarUrl.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde'))
+        ? user.avatarUrl.trim()
+        : '';
+
+      if (user.avatarUrl && user.avatarUrl.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde')) {
+        updateData.avatarUrl = '';
+        user.avatarUrl = '';
+      } else if (!currentDbAvatar && avatarUrl && typeof avatarUrl === 'string' && avatarUrl.trim().length > 0 && !avatarUrl.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde')) {
+        updateData.avatarUrl = avatarUrl.trim();
+        user.avatarUrl = avatarUrl.trim();
+      }
+
       if (name && name.trim().length > 0) updateData.name = name.trim();
       if (handle && handle.trim().length > 0) updateData.handle = handle.trim();
 
@@ -132,7 +154,7 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
       email: userEmail,
       name: userName,
       handle: userHandle,
-      avatarUrl: avatarUrl || DEFAULT_AVATAR,
+      avatarUrl: '',
     });
 
     inMemoryProfiles.set(userEmail, formatted);
@@ -214,13 +236,13 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
     }
 
     if (!user) {
-      // Default initial profile
+      // Default initial profile (Blank profile picture initially)
       const defaultProfile = formatUserProfile({
         id: userEmail.split('@')[0],
         name: userEmail === 'aksharmndh9@gmail.com' ? 'Akshar' : 'Mindful Friend',
         handle: `@${userEmail.split('@')[0]}`,
         email: userEmail,
-        avatarUrl: DEFAULT_AVATAR,
+        avatarUrl: '',
         lastActiveDate: todayDate,
       });
       inMemoryProfiles.set(userEmail, defaultProfile);
