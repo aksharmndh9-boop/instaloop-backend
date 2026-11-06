@@ -10,10 +10,19 @@ const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
   ]);
 };
 
+export function getTodayDateString(clientDate?: string): string {
+  if (clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate.trim())) {
+    return clientDate.trim();
+  }
+  return new Date().toISOString().split('T')[0];
+}
+
 export const getRhythmStats = async (req: AuthRequest, res: Response) => {
   try {
     const userEmail = (req.query.email as string)?.toLowerCase()?.trim() || req.user?.email;
     const userId = req.user?.id;
+    const clientDate = (req.headers['x-client-date'] as string) || (req.query.clientDate as string);
+    const todayDate = getTodayDateString(clientDate);
 
     let user: any = null;
     if (userEmail) {
@@ -27,10 +36,46 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
       }).catch(() => null);
     }
 
+    // Check Daily Rollover for today's sovereignty record
+    if (user) {
+      if (user.lastActiveDate && user.lastActiveDate !== todayDate) {
+        // It's a new day! Reset daily metrics to 0
+        let newStreak = user.streakDays || 1;
+        try {
+          const lastDate = new Date(user.lastActiveDate);
+          const currDate = new Date(todayDate);
+          const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
+          if (diffDays === 1) {
+            newStreak += 1;
+          } else if (diffDays > 1) {
+            newStreak = 1;
+          }
+        } catch (_) {}
+
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            reclaimedToday: 0,
+            loopsBrokenToday: 0,
+            reelsAvoidedToday: 0,
+            completedPausesToday: 0,
+            streakDays: newStreak,
+            lastActiveDate: todayDate,
+          },
+        }).catch(() => user);
+      } else if (!user.lastActiveDate) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { lastActiveDate: todayDate },
+        }).catch(() => user);
+      }
+    }
+
     const reclaimedSeconds = user?.reclaimedToday ?? 0;
     const streakDays = user?.streakDays ?? 1;
     const loopsBroken = user?.loopsBrokenToday ?? 0;
-    const reelsAvoided = user?.reelsAvoidedToday ?? Math.round(reclaimedSeconds * 2.5);
+    // Exactly 10 seconds per reel avoided average screen time
+    const reelsAvoided = user?.reelsAvoidedToday ?? Math.round(reclaimedSeconds / 10);
     const completedPauses = user?.completedPausesToday ?? 0;
     const dailyStillnessGoalMinutes = user?.dailyStillnessGoalMinutes ?? 20;
     const bonsaiVitality = user?.bonsaiVitality ?? 50;
@@ -61,7 +106,8 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
       bonsaiVitality,
       bonsaiStage,
       weeklyBars,
-      philosophy: 'Quantifying attention saved from infinite feeds. Every second paused is life reclaimed.',
+      lastActiveDate: user?.lastActiveDate || todayDate,
+      philosophy: 'Quantifying attention saved from infinite feeds. Every second paused is life reclaimed (10s avg per reel).',
     });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to retrieve rhythm metrics' });
@@ -71,26 +117,53 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
 export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
   try {
     const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
-    const { secondsReclaimed, bonsaiVitality } = req.body;
+    const { secondsReclaimed, bonsaiVitality, clientDate } = req.body;
+    const headerDate = (req.headers['x-client-date'] as string);
+    const todayDate = getTodayDateString(clientDate || headerDate);
     const seconds = Number(secondsReclaimed) || 15;
 
     let user = null;
     if (userEmail) {
       const existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
-      const prevVit = existingUser?.bonsaiVitality ?? 50;
-      const targetVit = bonsaiVitality !== undefined
-        ? Math.min(100, Math.max(10, Math.round(Number(bonsaiVitality))))
-        : Math.min(100, prevVit + 10);
+      if (existingUser) {
+        const isNewDay = existingUser.lastActiveDate && existingUser.lastActiveDate !== todayDate;
+        const prevVit = existingUser.bonsaiVitality ?? 50;
+        const targetVit = bonsaiVitality !== undefined
+          ? Math.min(100, Math.max(10, Math.round(Number(bonsaiVitality))))
+          : Math.min(100, prevVit + 10);
 
-      user = await prisma.user.update({
-        where: { email: userEmail },
-        data: {
-          loopsBrokenToday: { increment: 1 },
-          reclaimedToday: { increment: seconds },
-          reelsAvoidedToday: { increment: Math.max(1, Math.round(seconds / 5)) },
-          bonsaiVitality: targetVit,
-        },
-      }).catch(() => null);
+        let prevReclaimed = isNewDay ? 0 : (existingUser.reclaimedToday ?? 0);
+        let prevLoops = isNewDay ? 0 : (existingUser.loopsBrokenToday ?? 0);
+        let prevPauses = isNewDay ? 0 : (existingUser.completedPausesToday ?? 0);
+        let newStreak = existingUser.streakDays ?? 1;
+
+        if (isNewDay) {
+          try {
+            const lastDate = new Date(existingUser.lastActiveDate!);
+            const currDate = new Date(todayDate);
+            const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
+            if (diffDays === 1) newStreak += 1;
+            else if (diffDays > 1) newStreak = 1;
+          } catch (_) {}
+        }
+
+        const newReclaimed = prevReclaimed + seconds;
+        const newLoops = prevLoops + 1;
+        const newReelsAvoided = Math.round(newReclaimed / 10);
+
+        user = await prisma.user.update({
+          where: { email: userEmail },
+          data: {
+            loopsBrokenToday: newLoops,
+            reclaimedToday: newReclaimed,
+            reelsAvoidedToday: newReelsAvoided,
+            completedPausesToday: prevPauses,
+            streakDays: newStreak,
+            bonsaiVitality: targetVit,
+            lastActiveDate: todayDate,
+          },
+        }).catch(() => null);
+      }
     }
 
     return res.json({
@@ -98,8 +171,9 @@ export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
       message: 'Scroll loop interrupted. Reclaimed attention updated.',
       secondsAdded: seconds,
       user: user || {
-        reclaimedToday: 760 + seconds,
-        loopsBrokenToday: 15,
+        reclaimedToday: seconds,
+        loopsBrokenToday: 1,
+        reelsAvoidedToday: Math.round(seconds / 10),
       },
     });
   } catch (error) {
@@ -110,36 +184,60 @@ export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
 export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
   try {
     const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
-    const { durationSeconds, bonsaiVitality } = req.body;
+    const { durationSeconds, bonsaiVitality, clientDate } = req.body;
+    const headerDate = (req.headers['x-client-date'] as string);
+    const todayDate = getTodayDateString(clientDate || headerDate);
     const seconds = Number(durationSeconds) || 15;
 
     let user = null;
     if (userEmail) {
       const existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
-      const prevVit = existingUser?.bonsaiVitality ?? 50;
-      const prevReclaimed = existingUser?.reclaimedToday ?? 0;
-      const newTotalReclaimed = prevReclaimed + seconds;
+      if (existingUser) {
+        const isNewDay = existingUser.lastActiveDate && existingUser.lastActiveDate !== todayDate;
+        const prevVit = existingUser.bonsaiVitality ?? 50;
+        let prevReclaimed = isNewDay ? 0 : (existingUser.reclaimedToday ?? 0);
+        let prevLoops = isNewDay ? 0 : (existingUser.loopsBrokenToday ?? 0);
+        let prevPauses = isNewDay ? 0 : (existingUser.completedPausesToday ?? 0);
+        let newStreak = existingUser.streakDays ?? 1;
 
-      let newStage = "seedling";
-      if (newTotalReclaimed >= 6000) newStage = "ancientCanopy";
-      else if (newTotalReclaimed >= 2400) newStage = "flourishingBonsai";
-      else if (newTotalReclaimed >= 900) newStage = "youngBonsai";
-      else if (newTotalReclaimed >= 300) newStage = "sprout";
+        if (isNewDay) {
+          try {
+            const lastDate = new Date(existingUser.lastActiveDate!);
+            const currDate = new Date(todayDate);
+            const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
+            if (diffDays === 1) newStreak += 1;
+            else if (diffDays > 1) newStreak = 1;
+          } catch (_) {}
+        }
 
-      const targetVit = bonsaiVitality !== undefined
-        ? Math.min(100, Math.max(10, Math.round(Number(bonsaiVitality))))
-        : Math.min(100, Math.max(10, prevVit + Math.max(5, Math.round(seconds * 1.5))));
+        const newTotalReclaimed = prevReclaimed + seconds;
+        const newPauses = prevPauses + 1;
+        const newReelsAvoided = Math.round(newTotalReclaimed / 10);
 
-      user = await prisma.user.update({
-        where: { email: userEmail },
-        data: {
-          completedPausesToday: { increment: 1 },
-          reclaimedToday: { increment: seconds },
-          reelsAvoidedToday: { increment: Math.max(1, Math.round(seconds / 4)) },
-          bonsaiVitality: targetVit,
-          bonsaiStage: newStage,
-        },
-      }).catch(() => null);
+        let newStage = "seedling";
+        if (newTotalReclaimed >= 6000) newStage = "ancientCanopy";
+        else if (newTotalReclaimed >= 2400) newStage = "flourishingBonsai";
+        else if (newTotalReclaimed >= 900) newStage = "youngBonsai";
+        else if (newTotalReclaimed >= 300) newStage = "sprout";
+
+        const targetVit = bonsaiVitality !== undefined
+          ? Math.min(100, Math.max(10, Math.round(Number(bonsaiVitality))))
+          : Math.min(100, Math.max(10, prevVit + Math.max(5, Math.round(seconds * 1.5))));
+
+        user = await prisma.user.update({
+          where: { email: userEmail },
+          data: {
+            completedPausesToday: newPauses,
+            reclaimedToday: newTotalReclaimed,
+            reelsAvoidedToday: newReelsAvoided,
+            loopsBrokenToday: prevLoops,
+            streakDays: newStreak,
+            bonsaiVitality: targetVit,
+            bonsaiStage: newStage,
+            lastActiveDate: todayDate,
+          },
+        }).catch(() => null);
+      }
     }
 
     return res.json({
@@ -171,9 +269,9 @@ export const getGeminiRhythmInsight = async (req: AuthRequest, res: Response) =>
       }).catch(() => null);
     }
 
-    const reclaimedSeconds = user?.reclaimedToday || 760;
-    const streakDays = user?.streakDays || 19;
-    const loopsBroken = user?.loopsBrokenToday || 14;
+    const reclaimedSeconds = user?.reclaimedToday ?? 0;
+    const streakDays = user?.streakDays ?? 1;
+    const loopsBroken = user?.loopsBrokenToday ?? 0;
 
     if (genAI) {
       const candidateModels = [

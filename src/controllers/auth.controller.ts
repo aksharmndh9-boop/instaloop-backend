@@ -22,8 +22,9 @@ function formatUserProfile(user: any) {
     streakDays: user.streakDays ?? 1,
     reclaimedToday: user.reclaimedToday ?? 0,
     loopsBrokenToday: user.loopsBrokenToday ?? 0,
-    reelsAvoidedToday: user.reelsAvoidedToday ?? 0,
+    reelsAvoidedToday: user.reelsAvoidedToday ?? Math.round((user.reclaimedToday ?? 0) / 10),
     completedPausesToday: user.completedPausesToday ?? 0,
+    lastActiveDate: user.lastActiveDate || '',
     spiritualMantra:
       user.spiritualMantra ||
       'Resting my weary spirit in quietude. Choosing deep presence over digital chaos.',
@@ -40,7 +41,13 @@ function formatUserProfile(user: any) {
 
 export const googleFederatedAuth = async (req: Request, res: Response) => {
   try {
-    const { email, name, avatarUrl, handle } = req.body;
+    const { email, name, avatarUrl, handle, clientDate } = req.body;
+    const headerDate = (req.headers['x-client-date'] as string);
+    const todayDate = (clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate))
+      ? clientDate
+      : (headerDate && /^\d{4}-\d{2}-\d{2}$/.test(headerDate))
+        ? headerDate
+        : new Date().toISOString().split('T')[0];
 
     const userEmail = (email || 'aksharmndh9@gmail.com').toLowerCase().trim();
     const userName = name || 'Akshar';
@@ -67,6 +74,7 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
             loopsBrokenToday: 0,
             reelsAvoidedToday: 0,
             completedPausesToday: 0,
+            lastActiveDate: todayDate,
             spiritualMantra:
               'Resting my weary spirit in quietude. Choosing deep presence over digital chaos.',
             spiritualSeason: 'Season of Sacred Healing',
@@ -80,11 +88,34 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
         })
         .catch(() => null);
     } else {
-      // User exists - update avatar or name if provided
+      // User exists - check daily rollover!
+      // If user logs in multiple times on the SAME day, preserve all metrics!
+      // If user logs in on a NEW day, reset daily metrics to 0 and advance streak!
       const updateData: any = {};
       if (avatarUrl && avatarUrl.trim().length > 0) updateData.avatarUrl = avatarUrl.trim();
       if (name && name.trim().length > 0) updateData.name = name.trim();
       if (handle && handle.trim().length > 0) updateData.handle = handle.trim();
+
+      if (user.lastActiveDate && user.lastActiveDate !== todayDate) {
+        // It's a new day!
+        let newStreak = user.streakDays || 1;
+        try {
+          const lastDate = new Date(user.lastActiveDate);
+          const currDate = new Date(todayDate);
+          const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
+          if (diffDays === 1) newStreak += 1;
+          else if (diffDays > 1) newStreak = 1;
+        } catch (_) {}
+
+        updateData.reclaimedToday = 0;
+        updateData.loopsBrokenToday = 0;
+        updateData.reelsAvoidedToday = 0;
+        updateData.completedPausesToday = 0;
+        updateData.streakDays = newStreak;
+        updateData.lastActiveDate = todayDate;
+      } else if (!user.lastActiveDate) {
+        updateData.lastActiveDate = todayDate;
+      }
 
       if (Object.keys(updateData).length > 0) {
         user = await prisma.user
@@ -131,16 +162,33 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
     const queryHandle = (req.query.handle as string)?.toLowerCase()?.trim();
     const userEmail = queryEmail || req.user?.email || 'aksharmndh9@gmail.com';
     const userId = req.user?.id;
+    const headerDate = (req.headers['x-client-date'] as string);
+    const queryDate = (req.query.clientDate as string);
+    const todayDate = (queryDate && /^\d{4}-\d{2}-\d{2}$/.test(queryDate))
+      ? queryDate
+      : (headerDate && /^\d{4}-\d{2}-\d{2}$/.test(headerDate))
+        ? headerDate
+        : new Date().toISOString().split('T')[0];
 
-    // Check memory cache first
+    // Check memory cache first - but invalidate if from an older day
     if (userEmail && inMemoryProfiles.has(userEmail)) {
-      return res.json(inMemoryProfiles.get(userEmail));
+      const cached = inMemoryProfiles.get(userEmail);
+      if (cached.lastActiveDate === todayDate) {
+        return res.json(cached);
+      } else {
+        inMemoryProfiles.delete(userEmail);
+      }
     }
     if (queryHandle && inMemoryProfiles.has(queryHandle)) {
-      return res.json(inMemoryProfiles.get(queryHandle));
+      const cached = inMemoryProfiles.get(queryHandle);
+      if (cached.lastActiveDate === todayDate) {
+        return res.json(cached);
+      } else {
+        inMemoryProfiles.delete(queryHandle);
+      }
     }
 
-    let user = null;
+    let user: any = null;
     if (userEmail) {
       user = await prisma.user
         .findUnique({
@@ -173,9 +221,39 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
         handle: `@${userEmail.split('@')[0]}`,
         email: userEmail,
         avatarUrl: DEFAULT_AVATAR,
+        lastActiveDate: todayDate,
       });
       inMemoryProfiles.set(userEmail, defaultProfile);
       return res.json(defaultProfile);
+    }
+
+    // Check Daily Rollover for today's sovereignty record
+    if (user.lastActiveDate && user.lastActiveDate !== todayDate) {
+      let newStreak = user.streakDays || 1;
+      try {
+        const lastDate = new Date(user.lastActiveDate);
+        const currDate = new Date(todayDate);
+        const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
+        if (diffDays === 1) newStreak += 1;
+        else if (diffDays > 1) newStreak = 1;
+      } catch (_) {}
+
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          reclaimedToday: 0,
+          loopsBrokenToday: 0,
+          reelsAvoidedToday: 0,
+          completedPausesToday: 0,
+          streakDays: newStreak,
+          lastActiveDate: todayDate,
+        },
+      }).catch(() => user);
+    } else if (!user.lastActiveDate) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { lastActiveDate: todayDate },
+      }).catch(() => user);
     }
 
     const formatted = formatUserProfile(user);
@@ -195,6 +273,9 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
       req.user?.email ||
       'aksharmndh9@gmail.com';
 
+    const headerDate = (req.headers['x-client-date'] as string);
+    const todayDate = (req.body.clientDate as string) || headerDate || new Date().toISOString().split('T')[0];
+
     const {
       name,
       handle,
@@ -204,6 +285,7 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
       loopsBrokenToday,
       reelsAvoidedToday,
       completedPausesToday,
+      lastActiveDate,
       spiritualMantra,
       spiritualSeason,
       soulPresenceState,
@@ -233,10 +315,17 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
       updatedData.avatarUrl = avatarUrl.trim();
     }
     if (streakDays !== undefined) updatedData.streakDays = Number(streakDays);
-    if (reclaimedToday !== undefined) updatedData.reclaimedToday = Number(reclaimedToday);
+    if (reclaimedToday !== undefined) {
+      updatedData.reclaimedToday = Number(reclaimedToday);
+      // Auto compute reels avoided based on 10s rule if not explicitly overridden
+      if (reelsAvoidedToday === undefined) {
+        updatedData.reelsAvoidedToday = Math.round(Number(reclaimedToday) / 10);
+      }
+    }
     if (loopsBrokenToday !== undefined) updatedData.loopsBrokenToday = Number(loopsBrokenToday);
     if (reelsAvoidedToday !== undefined) updatedData.reelsAvoidedToday = Number(reelsAvoidedToday);
     if (completedPausesToday !== undefined) updatedData.completedPausesToday = Number(completedPausesToday);
+    updatedData.lastActiveDate = lastActiveDate || existing?.lastActiveDate || todayDate;
     if (spiritualMantra !== undefined) updatedData.spiritualMantra = spiritualMantra;
     if (spiritualSeason !== undefined) updatedData.spiritualSeason = spiritualSeason;
     if (soulPresenceState !== undefined) updatedData.soulPresenceState = soulPresenceState;
@@ -269,6 +358,7 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
           loopsBrokenToday: formatted.loopsBrokenToday,
           reelsAvoidedToday: formatted.reelsAvoidedToday,
           completedPausesToday: formatted.completedPausesToday,
+          lastActiveDate: formatted.lastActiveDate || todayDate,
           spiritualMantra: formatted.spiritualMantra,
           spiritualSeason: formatted.spiritualSeason,
           soulPresenceState: formatted.soulPresenceState,
@@ -288,6 +378,7 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
           loopsBrokenToday: formatted.loopsBrokenToday,
           reelsAvoidedToday: formatted.reelsAvoidedToday,
           completedPausesToday: formatted.completedPausesToday,
+          lastActiveDate: formatted.lastActiveDate || todayDate,
           spiritualMantra: formatted.spiritualMantra,
           spiritualSeason: formatted.spiritualSeason,
           soulPresenceState: formatted.soulPresenceState,
