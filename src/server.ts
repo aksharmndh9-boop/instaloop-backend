@@ -46,6 +46,10 @@ app.get('/health', (req, res) => {
 });
 
 // Mount Routes
+app.get('/api/rhythm/live-sync', (req, res) => {
+  const realCount = io.engine?.clientsCount || 0;
+  res.json({ count: realCount });
+});
 app.use('/api/auth', authRoutes);
 app.use('/api/inbox', inboxRoutes);
 app.use('/api/companions', companionRoutes);

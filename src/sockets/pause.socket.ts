@@ -1,8 +1,16 @@
 import { Server, Socket } from 'socket.io';
 
 export const setupPauseSockets = (io: Server) => {
+  const broadcastLiveSyncCount = () => {
+    try {
+      const realCount = io.engine?.clientsCount || 0;
+      io.emit('live_sync_count', { count: realCount });
+    } catch (_) {}
+  };
+
   io.on('connection', (socket: Socket) => {
     console.log(`🌿 Mindful presence connected: ${socket.id}`);
+    broadcastLiveSyncCount();
 
     // Join user's individual room for targeted pause delivery
     socket.on('join_user_room', (userId: string) => {
@@ -22,6 +30,7 @@ export const setupPauseSockets = (io: Server) => {
 
     socket.on('disconnect', () => {
       console.log(`Presence disconnected: ${socket.id}`);
+      broadcastLiveSyncCount();
     });
   });
 };
