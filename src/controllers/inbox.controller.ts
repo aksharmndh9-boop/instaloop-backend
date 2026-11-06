@@ -20,14 +20,57 @@ const INITIAL_MOCK_MESSAGES = [
     isCompleted: false,
     steppedAwayEarly: false,
     timestamp: 'Just now',
+    createdAt: new Date().toISOString(),
+    expiresInDays: 30,
   },
 ];
 
 let inMemoryMessages = [...INITIAL_MOCK_MESSAGES];
 
+/**
+ * Auto-delete / expire all messages in inbox older than 30 days.
+ * CRITICAL GUARANTEE: User stillness streaks (streakDays) and presence pacts
+ * remain 100% intact even after messages expire and are deleted.
+ */
+export const purgeExpiredMessages = async () => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // 1. Delete expired records from Prisma DB
+    await prisma.pauseMessage.deleteMany({
+      where: {
+        createdAt: {
+          lt: thirtyDaysAgo,
+        },
+      },
+    }).catch(() => null);
+
+    // 2. Filter in-memory messages older than 30 days
+    inMemoryMessages = inMemoryMessages.filter((m: any) => {
+      let createdTime: number | null = null;
+      if (m.createdAt) {
+        const parsed = new Date(m.createdAt).getTime();
+        if (!isNaN(parsed)) createdTime = parsed;
+      } else if (m.id && typeof m.id === 'string' && m.id.startsWith('m-')) {
+        const num = Number(m.id.replace('m-', ''));
+        if (!isNaN(num) && num > 1000000000000) createdTime = num;
+      }
+      if (createdTime !== null) {
+        return createdTime >= thirtyDaysAgo.getTime();
+      }
+      return true;
+    });
+  } catch (err) {
+    console.warn('Purge expired messages notice:', err);
+  }
+};
+
 export const getInbox = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id || 'usr-mindful';
+
+    // Auto-purge messages older than 30 days before serving
+    await purgeExpiredMessages();
 
     // Attempt DB fetch if connected
     const dbMessages = await prisma.pauseMessage.findMany({
@@ -37,26 +80,45 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
     }).catch(() => null);
 
     if (dbMessages && dbMessages.length > 0) {
-      const formatted = dbMessages.map((m) => ({
-        id: m.id,
-        senderId: m.senderId,
-        senderName: m.sender?.name || 'Mindful Friend',
-        senderRole: m.sender?.handle || 'Presence Sovereign',
-        avatarUrl: m.sender?.avatarUrl || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAfyYJT2xMkFLSVku_3SkpcUpwAcSiWn2ni6F1Rq8hfVT_NtHiHJSG6J2HqJhu-TlQm6Pf8K-HPj7fdpjf0kjpPxo0RD_QayZWSkP2lJnvwpN1HdbonYyzCrE_lSTQn8epa6euUpIwq3pNUBfO-5wsBYsLdiM789U8EtbViuOO9i0Zjl9gy2KSjN0PDoHekJ2A0ff2oep7jWB9Ocrag9034nrkyux6b4l0wVG7nGwY-Dgjl_r_y2e7p',
-        title: m.title,
-        note: m.note,
-        durationSeconds: m.durationSeconds,
-        tag: m.tag,
-        isRead: m.isRead,
-        isCompleted: m.isCompleted,
-        steppedAwayEarly: m.steppedAwayEarly,
-        timestamp: 'Recently',
-        sender: m.sender,
-      }));
+      const formatted = dbMessages.map((m) => {
+        const elapsedDays = Math.floor((Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+        const daysLeft = Math.max(0, 30 - elapsedDays);
+
+        return {
+          id: m.id,
+          senderId: m.senderId,
+          senderName: m.sender?.name || 'Mindful Friend',
+          senderRole: m.sender?.handle || 'Presence Sovereign',
+          avatarUrl: m.sender?.avatarUrl || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAfyYJT2xMkFLSVku_3SkpcUpwAcSiWn2ni6F1Rq8hfVT_NtHiHJSG6J2HqJhu-TlQm6Pf8K-HPj7fdpjf0kjpPxo0RD_QayZWSkP2lJnvwpN1HdbonYyzCrE_lSTQn8epa6euUpIwq3pNUBfO-5wsBYsLdiM789U8EtbViuOO9i0Zjl9gy2KSjN0PDoHekJ2A0ff2oep7jWB9Ocrag9034nrkyux6b4l0wVG7nGwY-Dgjl_r_y2e7p',
+          title: m.title,
+          note: m.note,
+          durationSeconds: m.durationSeconds,
+          tag: m.tag,
+          isRead: m.isRead,
+          isCompleted: m.isCompleted,
+          steppedAwayEarly: m.steppedAwayEarly,
+          timestamp: 'Recently',
+          createdAt: m.createdAt.toISOString(),
+          expiresInDays: daysLeft,
+          sender: m.sender,
+        };
+      });
       return res.json(formatted);
     }
 
-    return res.json(inMemoryMessages);
+    const formattedInMemory = inMemoryMessages.map((m: any) => {
+      let createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
+      if (isNaN(createdDate.getTime())) createdDate = new Date();
+      const elapsedDays = Math.floor((Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysLeft = Math.max(0, 30 - elapsedDays);
+      return {
+        ...m,
+        createdAt: createdDate.toISOString(),
+        expiresInDays: daysLeft,
+      };
+    });
+
+    return res.json(formattedInMemory);
   } catch (error) {
     return res.json(inMemoryMessages);
   }
@@ -73,6 +135,7 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       req.body.avatarUrl ||
       'https://lh3.googleusercontent.com/aida-public/AB6AXuCmvTvw2vUiNi2t66ONaWIluHLI9OBm4euIQS92BMXtTJsfDOJvur_Mpba2Cc6f2EHULwiVe43Uel0hRAFmMYj68Pa8g2PpXfgJNzAh4l28Mm4PNy4Y-UuDKEH4_yKjVkF9XM-zix8Z-VbIn5qjNQVW7_xxgvBqTz-en8iQoe8g4iCUsUjz6jsgWhkcfCe2NsA9cY2xTcN6HhvG08UJD4AvnBJA3tOIvgLHbwS4CoBIYejaOUVpiBPD';
 
+    const now = new Date();
     const newPause = {
       id: `m-${Date.now()}`,
       senderId,
@@ -88,6 +151,8 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       isCompleted: false,
       steppedAwayEarly: false,
       timestamp: 'Just now',
+      createdAt: now.toISOString(),
+      expiresInDays: 30,
     };
 
     inMemoryMessages.unshift(newPause);

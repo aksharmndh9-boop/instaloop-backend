@@ -12,6 +12,7 @@ import rhythmRoutes from './routes/rhythm.routes';
 import friendsRoutes from './routes/friends.routes';
 import { serveInvitePage } from './controllers/friends.controller';
 import { setupPauseSockets } from './sockets/pause.socket';
+import { purgeExpiredMessages } from './controllers/inbox.controller';
 import prisma from './config/db';
 
 dotenv.config();
@@ -88,6 +89,12 @@ server.listen(PORT, async () => {
   } catch (err: any) {
     console.log(`⚠️  Database offline or pending: using resilient mindful in-memory state`);
   }
+
+  // Auto-delete / expire inbox messages older than 30 days (while keeping streaks intact)
+  await purgeExpiredMessages();
+  setInterval(() => {
+    purgeExpiredMessages();
+  }, 24 * 60 * 60 * 1000);
   
   console.log(`=================================================`);
 });
