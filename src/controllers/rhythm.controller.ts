@@ -124,7 +124,22 @@ export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
 
     let user = null;
     if (userEmail) {
-      const existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
+      let existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
+      if (!existingUser) {
+        existingUser = await prisma.user.create({
+          data: {
+            email: userEmail,
+            name: userEmail.split('@')[0],
+            handle: `@${userEmail.split('@')[0]}`,
+            lastActiveDate: todayDate,
+            streakDays: 1,
+            reclaimedToday: 0,
+            loopsBrokenToday: 0,
+            reelsAvoidedToday: 0,
+            completedPausesToday: 0,
+          },
+        }).catch(() => null);
+      }
       if (existingUser) {
         const isNewDay = existingUser.lastActiveDate && existingUser.lastActiveDate !== todayDate;
         const prevVit = existingUser.bonsaiVitality ?? 50;
@@ -191,7 +206,22 @@ export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
 
     let user = null;
     if (userEmail) {
-      const existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
+      let existingUser = await prisma.user.findUnique({ where: { email: userEmail } }).catch(() => null);
+      if (!existingUser) {
+        existingUser = await prisma.user.create({
+          data: {
+            email: userEmail,
+            name: userEmail.split('@')[0],
+            handle: `@${userEmail.split('@')[0]}`,
+            lastActiveDate: todayDate,
+            streakDays: 1,
+            reclaimedToday: 0,
+            loopsBrokenToday: 0,
+            reelsAvoidedToday: 0,
+            completedPausesToday: 0,
+          },
+        }).catch(() => null);
+      }
       if (existingUser) {
         const isNewDay = existingUser.lastActiveDate && existingUser.lastActiveDate !== todayDate;
         const prevVit = existingUser.bonsaiVitality ?? 50;
