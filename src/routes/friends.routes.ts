@@ -5,6 +5,7 @@ import {
   getFriendRequests,
   respondToFriendRequest,
   getFriendsList,
+  connectViaSecretInvite,
 } from '../controllers/friends.controller';
 
 const router = Router();
@@ -23,5 +24,8 @@ router.post('/respond', respondToFriendRequest);
 
 // Get accepted real friends list
 router.get('/list', getFriendsList);
+
+// Connect via Secret Invite Link (Instant mutual connection)
+router.post('/secret-invite-connect', connectViaSecretInvite);
 
 export default router;

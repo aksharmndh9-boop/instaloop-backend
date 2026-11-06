@@ -1,5 +1,7 @@
 import express from 'express';
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -8,6 +10,7 @@ import inboxRoutes from './routes/inbox.routes';
 import companionRoutes from './routes/companion.routes';
 import rhythmRoutes from './routes/rhythm.routes';
 import friendsRoutes from './routes/friends.routes';
+import { serveInvitePage } from './controllers/friends.controller';
 import { setupPauseSockets } from './sockets/pause.socket';
 import prisma from './config/db';
 
@@ -47,6 +50,24 @@ app.use('/api/inbox', inboxRoutes);
 app.use('/api/companions', companionRoutes);
 app.use('/api/rhythm', rhythmRoutes);
 app.use('/api/friends', friendsRoutes);
+
+// Secret Invite Landing Pages (Open in App or Download)
+app.get('/invite/:handle?', serveInvitePage);
+app.get('/invite', serveInvitePage);
+app.get('/join', serveInvitePage);
+
+// Direct APK Download Endpoint
+app.get('/download/apk', (req, res) => {
+  const localApk = path.join(__dirname, '../public/instaloop-release.apk');
+  const rootApk = path.join(__dirname, '../../instaloop-release.apk');
+  if (fs.existsSync(localApk)) {
+    return res.download(localApk, 'instaloop-release.apk');
+  }
+  if (fs.existsSync(rootApk)) {
+    return res.download(rootApk, 'instaloop-release.apk');
+  }
+  return res.redirect('https://github.com/aksharmndh9-boop/instaloop-backend/releases/download/v1.0.0/instaloop-release.apk');
+});
 
 // Setup WebSockets
 setupPauseSockets(io);
