@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
 import genAI from '../config/gemini';
@@ -305,6 +305,7 @@ export const getGeminiRhythmInsight = async (req: AuthRequest, res: Response) =>
 
     if (genAI) {
       const candidateModels = [
+        'gemini-2.5-flash',
         'gemini-1.5-flash',
         'gemini-2.0-flash',
         'gemini-flash-latest',
@@ -332,7 +333,7 @@ Respond with a JSON object in this EXACT structure (no markdown, just raw JSON):
             model: modelName,
             generationConfig: { responseMimeType: 'application/json' },
           });
-          const result = await withTimeout(model.generateContent(prompt), 2000);
+          const result = await withTimeout(model.generateContent(prompt), 6000);
           const text = result.response.text();
           if (text && text.trim().length > 0) {
             const parsed = JSON.parse(text.trim());
@@ -419,7 +420,7 @@ Generate a JSON object with this EXACT structure (no markdown, just raw JSON):
             model: modelName,
             generationConfig: { responseMimeType: 'application/json' },
           });
-          const result = await withTimeout(model.generateContent(prompt), 2000);
+          const result = await withTimeout(model.generateContent(prompt), 6000);
           const text = result.response.text();
           if (text && text.trim().length > 0) {
             const parsed = JSON.parse(text.trim());
