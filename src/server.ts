@@ -11,6 +11,7 @@ import companionRoutes from './routes/companion.routes';
 import rhythmRoutes from './routes/rhythm.routes';
 import friendsRoutes from './routes/friends.routes';
 import { serveInvitePage } from './controllers/friends.controller';
+import { servePrivacyPolicy } from './controllers/privacy.controller';
 import { setupPauseSockets } from './sockets/pause.socket';
 import { purgeExpiredMessages } from './controllers/inbox.controller';
 import prisma from './config/db';
@@ -57,6 +58,8 @@ app.use('/api/rhythm', rhythmRoutes);
 app.use('/api/friends', friendsRoutes);
 
 // Secret Invite Landing Pages (Open in App or Download)
+app.get('/privacy', servePrivacyPolicy);
+app.get('/terms', servePrivacyPolicy);
 app.get('/invite/:handle?', serveInvitePage);
 app.get('/invite', serveInvitePage);
 app.get('/join', serveInvitePage);
