@@ -169,13 +169,13 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       },
     }).catch(() => {});
 
-    // Broadcast in real-time to recipient's room and global mindful channel
+    // Broadcast in real-time to recipient's room without duplicating
     if (io) {
-      if (receiverId) {
+      if (receiverId && receiverId !== 'all') {
         io.to(receiverId).emit('new_pause_received', newPause);
+      } else {
+        io.to('all').emit('new_pause_received', newPause);
       }
-      io.to('all').emit('new_pause_received', newPause);
-      io.emit('mindful_pause_broadcast', newPause);
     }
 
     return res.status(201).json(newPause);
