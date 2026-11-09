@@ -21,31 +21,31 @@ const INITIAL_MOCK_MESSAGES = [
     steppedAwayEarly: false,
     timestamp: 'Just now',
     createdAt: new Date().toISOString(),
-    expiresInDays: 30,
+    expiresInDays: 15,
   },
 ];
 
 let inMemoryMessages = [...INITIAL_MOCK_MESSAGES];
 
 /**
- * Auto-delete / expire all messages in inbox older than 30 days.
+ * Auto-delete / expire all messages in inbox older than 15 days.
  * CRITICAL GUARANTEE: User stillness streaks (streakDays) and presence pacts
  * remain 100% intact even after messages expire and are deleted.
  */
 export const purgeExpiredMessages = async () => {
   try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
 
-    // 1. Delete expired records from Prisma DB
+    // 1. Delete expired records from Prisma DB (older than 15 days)
     await prisma.pauseMessage.deleteMany({
       where: {
         createdAt: {
-          lt: thirtyDaysAgo,
+          lt: fifteenDaysAgo,
         },
       },
     }).catch(() => null);
 
-    // 2. Filter in-memory messages older than 30 days
+    // 2. Filter in-memory messages older than 15 days
     inMemoryMessages = inMemoryMessages.filter((m: any) => {
       let createdTime: number | null = null;
       if (m.createdAt) {
@@ -56,7 +56,7 @@ export const purgeExpiredMessages = async () => {
         if (!isNaN(num) && num > 1000000000000) createdTime = num;
       }
       if (createdTime !== null) {
-        return createdTime >= thirtyDaysAgo.getTime();
+        return createdTime >= fifteenDaysAgo.getTime();
       }
       return true;
     });
@@ -69,7 +69,7 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.id || 'usr-mindful';
 
-    // Auto-purge messages older than 30 days before serving
+    // Auto-purge messages older than 15 days before serving
     await purgeExpiredMessages();
 
     // Attempt DB fetch if connected
@@ -82,7 +82,7 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
     if (dbMessages && dbMessages.length > 0) {
       const formatted = dbMessages.map((m) => {
         const elapsedDays = Math.floor((Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-        const daysLeft = Math.max(0, 30 - elapsedDays);
+        const daysLeft = Math.max(0, 15 - elapsedDays);
 
         return {
           id: m.id,
@@ -110,7 +110,7 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
       let createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
       if (isNaN(createdDate.getTime())) createdDate = new Date();
       const elapsedDays = Math.floor((Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24));
-      const daysLeft = Math.max(0, 30 - elapsedDays);
+      const daysLeft = Math.max(0, 15 - elapsedDays);
       return {
         ...m,
         createdAt: createdDate.toISOString(),
@@ -152,7 +152,7 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       steppedAwayEarly: false,
       timestamp: 'Just now',
       createdAt: now.toISOString(),
-      expiresInDays: 30,
+      expiresInDays: 15,
     };
 
     inMemoryMessages.unshift(newPause);

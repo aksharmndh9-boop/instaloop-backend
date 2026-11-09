@@ -35,13 +35,22 @@ export const authenticateToken = (
       return next();
     }
 
-    // Default fallback user for mindful testing
-    req.user = {
-      id: 'aksharmndh9',
-      email: 'aksharmndh9@gmail.com',
-      handle: '@aksharmndh9',
-    };
-    return next();
+    const fallbackEmail =
+      (req.body?.email as string)?.trim()?.toLowerCase() ||
+      (req.query?.email as string)?.trim()?.toLowerCase() ||
+      (req.headers['x-user-email'] as string)?.trim()?.toLowerCase();
+
+    if (fallbackEmail) {
+      const base = fallbackEmail.split('@')[0];
+      req.user = {
+        id: base,
+        email: fallbackEmail,
+        handle: `@${base}`,
+      };
+      return next();
+    }
+
+    return res.status(401).json({ error: 'Unauthenticated user. Please provide authorization or user email.' });
   }
 
   const secret = process.env.JWT_SECRET || 'instaloop_mindful_sovereign_secret_key_2026';

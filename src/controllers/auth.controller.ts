@@ -11,6 +11,19 @@ const inMemoryProfiles = new Map<string, any>();
 
 const DEFAULT_AVATAR = '';
 
+export function getCalendarDayDiff(dateStr1: string, dateStr2: string): number {
+  if (!dateStr1 || !dateStr2) return 0;
+  try {
+    const p1 = dateStr1.split('T')[0].split('-').map(Number);
+    const p2 = dateStr2.split('T')[0].split('-').map(Number);
+    const d1 = Date.UTC(p1[0], p1[1] - 1, p1[2]);
+    const d2 = Date.UTC(p2[0], p2[1] - 1, p2[2]);
+    return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+  } catch (_) {
+    return 0;
+  }
+}
+
 function formatUserProfile(user: any) {
   let av = (user.avatarUrl && typeof user.avatarUrl === 'string') ? user.avatarUrl.trim() : '';
   if (av.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde')) {
@@ -18,9 +31,9 @@ function formatUserProfile(user: any) {
   }
   return {
     id: user.id || 'usr-default',
-    email: user.email || 'aksharmndh9@gmail.com',
-    name: user.name || 'Akshar',
-    handle: user.handle || '@aksharmndh9',
+    email: user.email || '',
+    name: user.name || (user.email ? user.email.split('@')[0].replace(/^./, (c: string) => c.toUpperCase()) : 'Mindful Friend'),
+    handle: user.handle || (user.email ? `@${user.email.split('@')[0]}` : '@friend'),
     avatarUrl: av,
     streakDays: user.streakDays ?? 1,
     reclaimedToday: user.reclaimedToday ?? 0,
@@ -52,10 +65,13 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
         ? headerDate
         : new Date().toISOString().split('T')[0];
 
-    const userEmail = (email || 'aksharmndh9@gmail.com').toLowerCase().trim();
-    const userName = name || 'Akshar';
-    const userHandle =
-      handle || `@${userEmail.split('@')[0]}`;
+    if (!email || typeof email !== 'string' || email.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Google email is required' });
+    }
+    const userEmail = email.toLowerCase().trim();
+    const defaultName = userEmail.split('@')[0].replace(/^./, (c: string) => c.toUpperCase());
+    const userName = name || defaultName;
+    const userHandle = handle || `@${userEmail.split('@')[0]}`;
 
     // Find or create user
     let user = await prisma.user
@@ -121,13 +137,13 @@ export const googleFederatedAuth = async (req: Request, res: Response) => {
       if (user.lastActiveDate && user.lastActiveDate !== todayDate) {
         // It's a new day!
         let newStreak = user.streakDays || 1;
-        try {
-          const lastDate = new Date(user.lastActiveDate);
-          const currDate = new Date(todayDate);
-          const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
-          if (diffDays === 1) newStreak += 1;
-          else if (diffDays > 1) newStreak = 1;
-        } catch (_) {}
+        const diffDays = getCalendarDayDiff(user.lastActiveDate, todayDate);
+        if (diffDays === 1) {
+          newStreak += 1;
+        } else if (diffDays > 2) {
+          // Grace period: keep streak if returning within 2 days
+          newStreak = 1;
+        }
 
         updateData.reclaimedToday = 0;
         updateData.loopsBrokenToday = 0;
@@ -182,7 +198,10 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
   try {
     const queryEmail = (req.query.email as string)?.toLowerCase()?.trim();
     const queryHandle = (req.query.handle as string)?.toLowerCase()?.trim();
-    const userEmail = queryEmail || req.user?.email || 'aksharmndh9@gmail.com';
+    const userEmail = queryEmail || req.user?.email || (queryHandle ? `${queryHandle.replace('@', '')}@instaloop.mindful` : null);
+    if (!userEmail) {
+      return res.status(400).json({ success: false, message: 'User email is required' });
+    }
     const userId = req.user?.id;
     const headerDate = (req.headers['x-client-date'] as string);
     const queryDate = (req.query.clientDate as string);
@@ -239,7 +258,7 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
       // Default initial profile (Blank profile picture initially)
       const defaultProfile = formatUserProfile({
         id: userEmail.split('@')[0],
-        name: userEmail === 'aksharmndh9@gmail.com' ? 'Akshar' : 'Mindful Friend',
+        name: userEmail.split('@')[0].replace(/^./, (c: string) => c.toUpperCase()),
         handle: `@${userEmail.split('@')[0]}`,
         email: userEmail,
         avatarUrl: '',
@@ -252,13 +271,12 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
     // Check Daily Rollover for today's sovereignty record
     if (user.lastActiveDate && user.lastActiveDate !== todayDate) {
       let newStreak = user.streakDays || 1;
-      try {
-        const lastDate = new Date(user.lastActiveDate);
-        const currDate = new Date(todayDate);
-        const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
-        if (diffDays === 1) newStreak += 1;
-        else if (diffDays > 1) newStreak = 1;
-      } catch (_) {}
+      const diffDays = getCalendarDayDiff(user.lastActiveDate, todayDate);
+      if (diffDays === 1) {
+        newStreak += 1;
+      } else if (diffDays > 2) {
+        newStreak = 1;
+      }
 
       user = await prisma.user.update({
         where: { id: user.id },
@@ -292,8 +310,11 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
     const email =
       (req.body.email as string)?.toLowerCase()?.trim() ||
       (req.query.email as string)?.toLowerCase()?.trim() ||
-      req.user?.email ||
-      'aksharmndh9@gmail.com';
+      req.user?.email;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'User email is required to update profile' });
+    }
 
     const headerDate = (req.headers['x-client-date'] as string);
     const todayDate = (req.body.clientDate as string) || headerDate || new Date().toISOString().split('T')[0];

@@ -555,7 +555,7 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
 // 7. Web Landing Page for Secret Invite Link (/invite/:handle, /invite, /join)
 export const serveInvitePage = async (req: Request, res: Response) => {
   try {
-    const rawHandle = (req.params.handle || req.query.from || req.query.handle || '@aksharmndh9') as string;
+    const rawHandle = (req.params.handle || req.query.from || req.query.handle || '@mindful') as string;
     const cleanHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
 
     const inviter = await findUserByEmailOrHandle(cleanHandle);

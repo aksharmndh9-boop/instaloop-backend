@@ -1,7 +1,8 @@
-﻿import { Response } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
 import genAI from '../config/gemini';
+import { getCalendarDayDiff } from './auth.controller';
 
 const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
   return Promise.race([
@@ -41,16 +42,12 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
       if (user.lastActiveDate && user.lastActiveDate !== todayDate) {
         // It's a new day! Reset daily metrics to 0
         let newStreak = user.streakDays || 1;
-        try {
-          const lastDate = new Date(user.lastActiveDate);
-          const currDate = new Date(todayDate);
-          const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
-          if (diffDays === 1) {
-            newStreak += 1;
-          } else if (diffDays > 1) {
-            newStreak = 1;
-          }
-        } catch (_) {}
+        const diffDays = getCalendarDayDiff(user.lastActiveDate, todayDate);
+        if (diffDays === 1) {
+          newStreak += 1;
+        } else if (diffDays > 2) {
+          newStreak = 1;
+        }
 
         user = await prisma.user.update({
           where: { id: user.id },
@@ -85,15 +82,35 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
       ? Math.min(1.0, reclaimedSeconds / (dailyStillnessGoalMinutes * 60))
       : 0.0;
 
-    const weeklyBars = [
-      { day: 'M', val: 0.0, sec: '0s', isToday: false },
-      { day: 'T', val: 0.0, sec: '0s', isToday: false },
-      { day: 'W', val: 0.0, sec: '0s', isToday: false },
-      { day: 'T', val: 0.0, sec: '0s', isToday: false },
-      { day: 'F', val: 0.0, sec: '0s', isToday: false },
-      { day: 'S', val: 0.0, sec: '0s', isToday: false },
-      { day: 'Today', val: progressVal, sec: `${reclaimedSeconds}s`, isToday: true },
-    ];
+    const daysOfWeek = ['M', 'T', 'W', 'T', 'F', 'S', 'Sun'];
+    const now = new Date();
+    const currentWeekday = now.getDay() === 0 ? 7 : now.getDay();
+
+    const weeklyBars = daysOfWeek.map((dayLabel, index) => {
+      const weekdayNum = index + 1;
+      const isToday = weekdayNum === currentWeekday;
+      const isPast = weekdayNum < currentWeekday;
+
+      let sec = 0;
+      if (isToday) {
+        sec = reclaimedSeconds;
+      } else if (isPast) {
+        if (streakDays > (currentWeekday - weekdayNum)) {
+          sec = Math.max(60, Math.round(reclaimedSeconds > 0 ? reclaimedSeconds : 60));
+        }
+      }
+
+      const val = dailyStillnessGoalMinutes > 0
+        ? Math.min(1.0, sec / (dailyStillnessGoalMinutes * 60))
+        : 0.0;
+
+      return {
+        day: dayLabel,
+        val,
+        sec: `${sec}s`,
+        isToday,
+      };
+    });
 
     return res.json({
       reclaimedSeconds,
@@ -116,7 +133,7 @@ export const getRhythmStats = async (req: AuthRequest, res: Response) => {
 
 export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
   try {
-    const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
+    const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email;
     const { secondsReclaimed, bonsaiVitality, clientDate } = req.body;
     const headerDate = (req.headers['x-client-date'] as string);
     const todayDate = getTodayDateString(clientDate || headerDate);
@@ -153,13 +170,9 @@ export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
         let newStreak = existingUser.streakDays ?? 1;
 
         if (isNewDay) {
-          try {
-            const lastDate = new Date(existingUser.lastActiveDate!);
-            const currDate = new Date(todayDate);
-            const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
-            if (diffDays === 1) newStreak += 1;
-            else if (diffDays > 1) newStreak = 1;
-          } catch (_) {}
+          const diffDays = getCalendarDayDiff(existingUser.lastActiveDate!, todayDate);
+          if (diffDays === 1) newStreak += 1;
+          else if (diffDays > 2) newStreak = 1;
         }
 
         const newReclaimed = prevReclaimed + seconds;
@@ -198,7 +211,7 @@ export const recordLoopBroken = async (req: AuthRequest, res: Response) => {
 
 export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
   try {
-    const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email || 'aksharmndh9@gmail.com';
+    const userEmail = (req.body.email as string)?.toLowerCase()?.trim() || req.user?.email;
     const { durationSeconds, bonsaiVitality, clientDate } = req.body;
     const headerDate = (req.headers['x-client-date'] as string);
     const todayDate = getTodayDateString(clientDate || headerDate);
@@ -231,13 +244,9 @@ export const recordPauseCompleted = async (req: AuthRequest, res: Response) => {
         let newStreak = existingUser.streakDays ?? 1;
 
         if (isNewDay) {
-          try {
-            const lastDate = new Date(existingUser.lastActiveDate!);
-            const currDate = new Date(todayDate);
-            const diffDays = Math.round((currDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24));
-            if (diffDays === 1) newStreak += 1;
-            else if (diffDays > 1) newStreak = 1;
-          } catch (_) {}
+          const diffDays = getCalendarDayDiff(existingUser.lastActiveDate!, todayDate);
+          if (diffDays === 1) newStreak += 1;
+          else if (diffDays > 2) newStreak = 1;
         }
 
         const newTotalReclaimed = prevReclaimed + seconds;
