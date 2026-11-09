@@ -350,9 +350,46 @@ export const respondToFriendRequest = async (req: Request, res: Response) => {
         io.emit('friend_request_accepted');
       }
 
+      let acceptedFriendPayload: any = undefined;
+      if (friendship) {
+        let cleanAvatar = friendship.requester.avatarUrl || '';
+        if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+        acceptedFriendPayload = {
+          id: friendship.requester.id,
+          name: friendship.requester.name,
+          handle: friendship.requester.handle,
+          avatarUrl: cleanAvatar,
+          quote: friendship.requester.spiritualMantra || 'Mindful intentional pause partner.',
+          status: 'Active now • Connected',
+          isOnline: true,
+          lastPauseTime: 'Recently',
+          defaultSeconds: 15,
+          syncStreakDays: 1,
+          pactActiveToday: true,
+        };
+      } else if (inMemoryFriendships.has(requestId)) {
+        const mem = inMemoryFriendships.get(requestId)!;
+        let cleanAvatar = mem.requesterAvatarUrl || '';
+        if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+        acceptedFriendPayload = {
+          id: mem.requesterId || mem.requesterHandle,
+          name: mem.requesterName,
+          handle: mem.requesterHandle,
+          avatarUrl: cleanAvatar,
+          quote: 'Mindful intentional pause partner.',
+          status: 'Active now • Connected',
+          isOnline: true,
+          lastPauseTime: 'Recently',
+          defaultSeconds: 15,
+          syncStreakDays: 1,
+          pactActiveToday: true,
+        };
+      }
+
       return res.json({
         success: true,
         message: 'Friend request accepted! You are now connected in your mindful circle.',
+        friend: acceptedFriendPayload,
       });
     } else {
       // Decline: delete the request record
@@ -400,28 +437,45 @@ export const getFriendsList = async (req: Request, res: Response) => {
     const userEmail = (req.query.email as string)?.trim().toLowerCase();
     const userHandle = (req.query.handle as string)?.trim();
 
-    let user = await findUserByEmailOrHandle(userEmail || '');
-    if (!user && userHandle) {
-      user = await findUserByEmailOrHandle(userHandle);
-    }
-
-    const normalizedEmail = userEmail || user?.email?.toLowerCase() || '';
-    const normalizedHandle = userHandle || user?.handle || '';
+    const normalizedEmail = userEmail || '';
+    const normalizedHandle = userHandle || '';
     const handleWithAt = normalizedHandle.startsWith('@') ? normalizedHandle.toLowerCase() : `@${normalizedHandle.toLowerCase()}`;
     const handleWithoutAt = normalizedHandle.startsWith('@') ? normalizedHandle.substring(1).toLowerCase() : normalizedHandle.toLowerCase();
-    const userId = user?.id || (normalizedEmail ? normalizedEmail.split('@')[0] : '');
+
+    // Find ALL user profiles in database that match this user's email or handle
+    const matchingUsers = await prisma.user
+      .findMany({
+        where: {
+          OR: [
+            ...(normalizedEmail ? [{ email: normalizedEmail }] : []),
+            ...(normalizedHandle
+              ? [
+                  { handle: handleWithAt },
+                  { handle: handleWithoutAt },
+                  { handle: normalizedHandle },
+                ]
+              : []),
+          ],
+        },
+      })
+      .catch(() => []);
+
+    const userIds = Array.from(new Set(matchingUsers.map((u: any) => u.id)));
+    if (normalizedEmail && !userIds.includes(normalizedEmail.split('@')[0])) {
+      userIds.push(normalizedEmail.split('@')[0]);
+    }
 
     const friendsMap = new Map<string, any>();
 
-    // 1. Query Prisma DB for accepted friendships (either side)
-    if (user?.id) {
+    // 1. Query Prisma DB for accepted friendships for ANY of the user's matching IDs
+    if (userIds.length > 0) {
       const dbFriendships = await prisma.friendship
         .findMany({
           where: {
             status: 'accepted',
             OR: [
-              { requesterId: user.id },
-              { receiverId: user.id },
+              { requesterId: { in: userIds } },
+              { receiverId: { in: userIds } },
             ],
           },
           include: {
@@ -433,12 +487,13 @@ export const getFriendsList = async (req: Request, res: Response) => {
         .catch(() => []);
 
       for (const f of dbFriendships) {
-        const otherUser = f.requesterId === user.id ? f.receiver : f.requester;
-        if (otherUser && otherUser.id !== user.id) {
+        const otherUser = userIds.includes(f.requesterId) ? f.receiver : f.requester;
+        if (otherUser && !userIds.includes(otherUser.id)) {
           let cleanAvatar = otherUser.avatarUrl || '';
           if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
 
-          friendsMap.set(otherUser.id, {
+          const key = otherUser.handle?.toLowerCase() || otherUser.id;
+          friendsMap.set(key, {
             id: otherUser.id,
             name: otherUser.name,
             handle: otherUser.handle,
@@ -459,24 +514,26 @@ export const getFriendsList = async (req: Request, res: Response) => {
     for (const [, mem] of inMemoryFriendships.entries()) {
       if (mem.status === 'accepted') {
         const isUserRequester =
-          (user && mem.requesterId === user.id) ||
+          userIds.includes(mem.requesterId) ||
           (normalizedEmail && mem.requesterHandle?.toLowerCase() === normalizedEmail) ||
+          (normalizedEmail && mem.requesterHandle?.toLowerCase().includes(normalizedEmail.split('@')[0])) ||
           mem.requesterHandle?.toLowerCase() === handleWithAt ||
           mem.requesterHandle?.toLowerCase() === handleWithoutAt;
 
         const isUserReceiver =
-          (user && mem.receiverId === user.id) ||
+          userIds.includes(mem.receiverId) ||
           (normalizedEmail && mem.receiverHandle?.toLowerCase() === normalizedEmail) ||
+          (normalizedEmail && mem.receiverHandle?.toLowerCase().includes(normalizedEmail.split('@')[0])) ||
           mem.receiverHandle?.toLowerCase() === handleWithAt ||
           mem.receiverHandle?.toLowerCase() === handleWithoutAt;
 
         if (isUserRequester) {
-          const fid = mem.receiverId || mem.receiverHandle;
-          if (!friendsMap.has(fid)) {
+          const key = mem.receiverHandle?.toLowerCase() || mem.receiverId;
+          if (key && !friendsMap.has(key)) {
             let cleanAvatar = mem.receiverAvatarUrl || '';
             if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
-            friendsMap.set(fid, {
-              id: fid,
+            friendsMap.set(key, {
+              id: mem.receiverId || key,
               name: mem.receiverName,
               handle: mem.receiverHandle,
               avatarUrl: cleanAvatar,
@@ -490,12 +547,12 @@ export const getFriendsList = async (req: Request, res: Response) => {
             });
           }
         } else if (isUserReceiver) {
-          const fid = mem.requesterId || mem.requesterHandle;
-          if (!friendsMap.has(fid)) {
+          const key = mem.requesterHandle?.toLowerCase() || mem.requesterId;
+          if (key && !friendsMap.has(key)) {
             let cleanAvatar = mem.requesterAvatarUrl || '';
             if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
-            friendsMap.set(fid, {
-              id: fid,
+            friendsMap.set(key, {
+              id: mem.requesterId || key,
               name: mem.requesterName,
               handle: mem.requesterHandle,
               avatarUrl: cleanAvatar,
