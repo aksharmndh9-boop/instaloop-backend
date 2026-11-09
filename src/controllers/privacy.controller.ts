@@ -117,7 +117,7 @@ export const servePrivacyPolicy = (req: Request, res: Response) => {
     <ul>
       <li><strong>Account Credentials</strong>: If you sign in via Google or custom handle, we store your email address, display name, handle, and avatar to identify your account across devices.</li>
       <li><strong>Mindful Metrics</strong>: Aggregated stats such as reclaimed seconds today, streak days, avoided reels, completed pauses, and Bonsai vitality.</li>
-      <li><strong>Finite Inbox Messages</strong>: Mindful pause invitations sent between mutual friends. Inactive messages are automatically purged after 30 days.</li>
+      <li><strong>Finite Inbox Messages</strong>: Mindful pause invitations sent between mutual friends. Inactive messages are automatically purged after 15 days.</li>
     </ul>
 
     <h2>4. Data Storage & Security</h2>

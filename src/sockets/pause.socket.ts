@@ -21,6 +21,11 @@ export const setupPauseSockets = (io: Server) => {
       const noAt = clean.replace('@', '').toLowerCase();
       socket.join(noAt);
       socket.join(`@${noAt}`);
+      if (clean.includes('@') && clean.includes('.')) {
+        const base = clean.split('@')[0].toLowerCase();
+        socket.join(base);
+        socket.join(`@${base}`);
+      }
       console.log(`User joined mindful channels: ${clean}, ${noAt}, @${noAt}`);
     });
 

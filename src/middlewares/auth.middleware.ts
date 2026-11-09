@@ -20,7 +20,8 @@ export const authenticateToken = (
   const emailFromQueryOrHeader =
     (req.query.email as string) ||
     (req.headers['x-user-email'] as string) ||
-    (req.body?.email as string);
+    (req.body?.email as string) ||
+    (req.body?.senderEmail as string);
 
   if (!token) {
     // If an email was explicitly passed in query, header, or body, use it
@@ -36,6 +37,7 @@ export const authenticateToken = (
     }
 
     const fallbackEmail =
+      (req.body?.senderEmail as string)?.trim()?.toLowerCase() ||
       (req.body?.email as string)?.trim()?.toLowerCase() ||
       (req.query?.email as string)?.trim()?.toLowerCase() ||
       (req.headers['x-user-email'] as string)?.trim()?.toLowerCase();
@@ -46,6 +48,22 @@ export const authenticateToken = (
         id: base,
         email: fallbackEmail,
         handle: `@${base}`,
+      };
+      return next();
+    }
+
+    const fallbackHandle =
+      (req.body?.senderHandle as string)?.trim() ||
+      (req.headers['x-user-handle'] as string)?.trim() ||
+      (req.query?.handle as string)?.trim() ||
+      (req.body?.senderId as string)?.trim();
+
+    if (fallbackHandle) {
+      const cleanH = fallbackHandle.replace('@', '').toLowerCase();
+      req.user = {
+        id: cleanH,
+        email: `${cleanH}@instaloop.mindful`,
+        handle: `@${cleanH}`,
       };
       return next();
     }

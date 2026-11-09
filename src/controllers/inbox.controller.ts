@@ -374,7 +374,6 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       if (targetRooms.size > 0) {
         for (const room of targetRooms) {
           io.to(room).emit('new_pause_received', newPause);
-          io.to(room).emit('mindful_pause_broadcast', newPause);
         }
       } else {
         io.to('all').emit('new_pause_received', newPause);

@@ -118,7 +118,7 @@ server.listen(PORT, async () => {
     console.log(`⚠️  Database offline or pending: using resilient mindful in-memory state`);
   }
 
-  // Auto-delete / expire inbox messages older than 30 days (while keeping streaks intact)
+  // Auto-delete / expire inbox messages older than 15 days (while keeping streaks intact)
   await purgeExpiredMessages();
   setInterval(() => {
     purgeExpiredMessages();
