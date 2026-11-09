@@ -374,64 +374,154 @@ export const respondToFriendRequest = async (req: Request, res: Response) => {
   }
 };
 
-// 5. Get Accepted Real Friends List
+// In-memory cache for IP-based automatic invite connections when downloading the APK
+export const pendingInvitesByIp = new Map<string, { inviterHandle: string; timestamp: number }>();
+
+export function recordPendingInviteIp(req: Request, inviterHandle: string) {
+  try {
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '';
+    if (clientIp && inviterHandle) {
+      const clean = inviterHandle.trim();
+      const withAt = clean.startsWith('@') ? clean : `@${clean}`;
+      pendingInvitesByIp.set(clientIp, {
+        inviterHandle: withAt,
+        timestamp: Date.now(),
+      });
+    }
+  } catch (_) {}
+}
+
+// 5. Get Accepted Real Friends List (Bidirectional: checks requester & receiver across DB & in-memory)
 export const getFriendsList = async (req: Request, res: Response) => {
   try {
-    const userEmail = (req.query.email as string)?.trim();
+    const userEmail = (req.query.email as string)?.trim().toLowerCase();
     const userHandle = (req.query.handle as string)?.trim();
 
-    const user = await findUserByEmailOrHandle(userEmail || userHandle);
-    if (!user) {
-      return res.json({ success: true, friends: [] });
+    let user = await findUserByEmailOrHandle(userEmail || '');
+    if (!user && userHandle) {
+      user = await findUserByEmailOrHandle(userHandle);
     }
 
-    const friendships = await prisma.friendship
-      .findMany({
-        where: {
-          status: 'accepted',
-          OR: [
-            { requesterId: user.id },
-            { receiverId: user.id },
-          ],
-        },
-        include: {
-          requester: true,
-          receiver: true,
-        },
-        orderBy: { updatedAt: 'desc' },
-      })
-      .catch(() => []);
+    const normalizedEmail = userEmail || user?.email?.toLowerCase() || '';
+    const normalizedHandle = userHandle || user?.handle || '';
+    const handleWithAt = normalizedHandle.startsWith('@') ? normalizedHandle.toLowerCase() : `@${normalizedHandle.toLowerCase()}`;
+    const handleWithoutAt = normalizedHandle.startsWith('@') ? normalizedHandle.substring(1).toLowerCase() : normalizedHandle.toLowerCase();
+    const userId = user?.id || (normalizedEmail ? normalizedEmail.split('@')[0] : '');
 
-    const friends = friendships.map((f: any) => {
-      // The other user is the friend
-      const otherUser = f.requesterId === user.id ? f.receiver : f.requester;
-      return {
-        id: otherUser.id,
-        name: otherUser.name,
-        handle: otherUser.handle,
-        avatarUrl:
-          otherUser.avatarUrl ||
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-        quote: otherUser.spiritualMantra || 'Mindful intentional pause partner.',
-        status: 'Active now • Connected',
-        isOnline: true,
-        lastPauseTime: 'Recently',
-        defaultSeconds: 15,
-        syncStreakDays: otherUser.streakDays ?? 1,
-        pactActiveToday: true,
-      };
-    });
+    const friendsMap = new Map<string, any>();
+
+    // 1. Query Prisma DB for accepted friendships (either side)
+    if (user?.id) {
+      const dbFriendships = await prisma.friendship
+        .findMany({
+          where: {
+            status: 'accepted',
+            OR: [
+              { requesterId: user.id },
+              { receiverId: user.id },
+            ],
+          },
+          include: {
+            requester: true,
+            receiver: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+        })
+        .catch(() => []);
+
+      for (const f of dbFriendships) {
+        const otherUser = f.requesterId === user.id ? f.receiver : f.requester;
+        if (otherUser && otherUser.id !== user.id) {
+          let cleanAvatar = otherUser.avatarUrl || '';
+          if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+
+          friendsMap.set(otherUser.id, {
+            id: otherUser.id,
+            name: otherUser.name,
+            handle: otherUser.handle,
+            avatarUrl: cleanAvatar,
+            quote: otherUser.spiritualMantra || 'Mindful intentional pause partner.',
+            status: 'Active now • Connected',
+            isOnline: true,
+            lastPauseTime: 'Recently',
+            defaultSeconds: 15,
+            syncStreakDays: otherUser.streakDays ?? 1,
+            pactActiveToday: true,
+          });
+        }
+      }
+    }
+
+    // 2. Query in-memory friendships for fallback / real-time synchronization
+    for (const [, mem] of inMemoryFriendships.entries()) {
+      if (mem.status === 'accepted') {
+        const isUserRequester =
+          (user && mem.requesterId === user.id) ||
+          (normalizedEmail && mem.requesterHandle?.toLowerCase() === normalizedEmail) ||
+          mem.requesterHandle?.toLowerCase() === handleWithAt ||
+          mem.requesterHandle?.toLowerCase() === handleWithoutAt;
+
+        const isUserReceiver =
+          (user && mem.receiverId === user.id) ||
+          (normalizedEmail && mem.receiverHandle?.toLowerCase() === normalizedEmail) ||
+          mem.receiverHandle?.toLowerCase() === handleWithAt ||
+          mem.receiverHandle?.toLowerCase() === handleWithoutAt;
+
+        if (isUserRequester) {
+          const fid = mem.receiverId || mem.receiverHandle;
+          if (!friendsMap.has(fid)) {
+            let cleanAvatar = mem.receiverAvatarUrl || '';
+            if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+            friendsMap.set(fid, {
+              id: fid,
+              name: mem.receiverName,
+              handle: mem.receiverHandle,
+              avatarUrl: cleanAvatar,
+              quote: 'Mindful intentional pause partner.',
+              status: 'Active now • Connected',
+              isOnline: true,
+              lastPauseTime: 'Recently',
+              defaultSeconds: 15,
+              syncStreakDays: 1,
+              pactActiveToday: true,
+            });
+          }
+        } else if (isUserReceiver) {
+          const fid = mem.requesterId || mem.requesterHandle;
+          if (!friendsMap.has(fid)) {
+            let cleanAvatar = mem.requesterAvatarUrl || '';
+            if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+            friendsMap.set(fid, {
+              id: fid,
+              name: mem.requesterName,
+              handle: mem.requesterHandle,
+              avatarUrl: cleanAvatar,
+              quote: 'Mindful intentional pause partner.',
+              status: 'Active now • Connected',
+              isOnline: true,
+              lastPauseTime: 'Recently',
+              defaultSeconds: 15,
+              syncStreakDays: 1,
+              pactActiveToday: true,
+            });
+          }
+        }
+      }
+    }
 
     return res.json({
       success: true,
-      friends,
+      friends: Array.from(friendsMap.values()),
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Failed to fetch friends list' });
   }
 };
 
-// 6. Connect via Secret Invite Link (Instant mutual connection)
+// 6. Connect via Secret Invite Link (Instant mutual bidirectional connection)
 export const connectViaSecretInvite = async (req: Request, res: Response) => {
   try {
     const { inviterHandle, userEmail, userHandle } = req.body;
@@ -478,7 +568,7 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
       });
     }
 
-    // Check if friendship already exists
+    // Create or update friendship in database
     let friendship = await prisma.friendship
       .findFirst({
         where: {
@@ -504,8 +594,34 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
           receiverId: user.id,
           status: 'accepted',
         },
+      }).catch(async () => {
+        // Fallback update
+        return await prisma.friendship.findFirst({
+          where: {
+            OR: [
+              { requesterId: inviter.id, receiverId: user.id },
+              { requesterId: user.id, receiverId: inviter.id },
+            ],
+          },
+        });
       });
     }
+
+    // Record in-memory bidirectional connection
+    const fId = friendship?.id || `friend-${Date.now()}`;
+    inMemoryFriendships.set(fId, {
+      id: fId,
+      requesterId: inviter.id,
+      requesterHandle: inviter.handle,
+      requesterName: inviter.name,
+      requesterAvatarUrl: (inviter.avatarUrl?.includes('photo-1534528741775') ? '' : inviter.avatarUrl) || undefined,
+      receiverId: user.id,
+      receiverHandle: user.handle,
+      receiverName: user.name,
+      receiverAvatarUrl: (user.avatarUrl?.includes('photo-1534528741775') ? '' : user.avatarUrl) || undefined,
+      status: 'accepted',
+      createdAt: new Date().toISOString(),
+    });
 
     // Real-time notification via WebSockets
     if (io) {
@@ -514,7 +630,7 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
           id: user.id,
           name: user.name,
           handle: user.handle,
-          avatarUrl: user.avatarUrl,
+          avatarUrl: user.avatarUrl?.includes('photo-1534528741775') ? '' : user.avatarUrl,
         },
       });
       io.to(user.id).emit('friend_connected', {
@@ -522,11 +638,14 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
           id: inviter.id,
           name: inviter.name,
           handle: inviter.handle,
-          avatarUrl: inviter.avatarUrl,
+          avatarUrl: inviter.avatarUrl?.includes('photo-1534528741775') ? '' : inviter.avatarUrl,
         },
       });
       io.emit('friend_request_accepted');
     }
+
+    let cleanInviterAvatar = inviter.avatarUrl || '';
+    if (cleanInviterAvatar.includes('photo-1534528741775')) cleanInviterAvatar = '';
 
     return res.json({
       success: true,
@@ -535,9 +654,7 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
         id: inviter.id,
         name: inviter.name,
         handle: inviter.handle,
-        avatarUrl:
-          inviter.avatarUrl ||
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        avatarUrl: cleanInviterAvatar,
         quote: inviter.spiritualMantra || 'Mindful intentional pause partner.',
         status: 'Active now • Connected',
         isOnline: true,
@@ -552,16 +669,143 @@ export const connectViaSecretInvite = async (req: Request, res: Response) => {
   }
 };
 
-// 7. Web Landing Page for Secret Invite Link (/invite/:handle, /invite, /join)
+// 7. Auto-Connect on Download (Called on app launch to connect user who downloaded via invite link)
+export const autoConnectOnDownload = async (req: Request, res: Response) => {
+  try {
+    const clientIp =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '';
+    const userEmail = (req.query.email as string)?.trim().toLowerCase();
+    const userHandle = (req.query.handle as string)?.trim();
+
+    if (!clientIp || !pendingInvitesByIp.has(clientIp)) {
+      return res.json({ connected: false, message: 'No pending invite for this IP' });
+    }
+
+    const pending = pendingInvitesByIp.get(clientIp)!;
+    // Valid for 3 hours (180 minutes)
+    if (Date.now() - pending.timestamp > 3 * 60 * 60 * 1000) {
+      pendingInvitesByIp.delete(clientIp);
+      return res.json({ connected: false, message: 'Invite expired' });
+    }
+
+    if (!userEmail && !userHandle) {
+      return res.json({ connected: false, pendingInviter: pending.inviterHandle });
+    }
+
+    const inviter = await findUserByEmailOrHandle(pending.inviterHandle);
+    let user = await findUserByEmailOrHandle(userEmail || userHandle || '');
+    if (!user && (userEmail || userHandle)) {
+      const cleanEmail = (userEmail || `${(userHandle || 'user').replace('@', '')}@instaloop.mindful`).toLowerCase();
+      const defaultHandle = userHandle || `@${cleanEmail.split('@')[0]}`;
+      user = await prisma.user
+        .create({
+          data: {
+            email: cleanEmail,
+            name: defaultHandle.replace('@', ''),
+            handle: defaultHandle,
+          },
+        })
+        .catch(() => null);
+    }
+
+    if (inviter && user && inviter.id !== user.id) {
+      // Connect mutually
+      await prisma.friendship
+        .upsert({
+          where: {
+            requesterId_receiverId: {
+              requesterId: inviter.id,
+              receiverId: user.id,
+            },
+          },
+          update: { status: 'accepted' },
+          create: {
+            requesterId: inviter.id,
+            receiverId: user.id,
+            status: 'accepted',
+          },
+        })
+        .catch(async () => {
+          await prisma.friendship.updateMany({
+            where: {
+              OR: [
+                { requesterId: inviter.id, receiverId: user.id },
+                { requesterId: user.id, receiverId: inviter.id },
+              ],
+            },
+            data: { status: 'accepted' },
+          }).catch(() => {});
+        });
+
+      const fId = `friend-${Date.now()}`;
+      inMemoryFriendships.set(fId, {
+        id: fId,
+        requesterId: inviter.id,
+        requesterHandle: inviter.handle,
+        requesterName: inviter.name,
+        receiverId: user.id,
+        receiverHandle: user.handle,
+        receiverName: user.name,
+        status: 'accepted',
+        createdAt: new Date().toISOString(),
+      });
+
+      pendingInvitesByIp.delete(clientIp);
+
+      if (io) {
+        io.to(inviter.id).emit('friend_connected', { friend: user });
+        io.to(user.id).emit('friend_connected', { friend: inviter });
+        io.emit('friend_request_accepted');
+      }
+
+      let cleanInviterAvatar = inviter.avatarUrl || '';
+      if (cleanInviterAvatar.includes('photo-1534528741775')) cleanInviterAvatar = '';
+
+      return res.json({
+        connected: true,
+        message: `✨ Connected with ${inviter.name} (${inviter.handle}) automatically from download!`,
+        friend: {
+          id: inviter.id,
+          name: inviter.name,
+          handle: inviter.handle,
+          avatarUrl: cleanInviterAvatar,
+          quote: inviter.spiritualMantra || 'Mindful intentional pause partner.',
+          status: 'Active now • Connected',
+          isOnline: true,
+          defaultSeconds: 15,
+          syncStreakDays: 1,
+          pactActiveToday: true,
+        },
+      });
+    }
+
+    return res.json({ connected: false });
+  } catch (err) {
+    return res.status(500).json({ connected: false });
+  }
+};
+
+// 8. Web Landing Page for Secret Invite Link (/invite/:handle, /invite, /join)
 export const serveInvitePage = async (req: Request, res: Response) => {
   try {
     const rawHandle = (req.params.handle || req.query.from || req.query.handle || '@mindful') as string;
     const cleanHandle = rawHandle.startsWith('@') ? rawHandle : `@${rawHandle}`;
 
+    // Record IP for automatic seamless connection when they download the app
+    recordPendingInviteIp(req, cleanHandle);
+
     const inviter = await findUserByEmailOrHandle(cleanHandle);
     const displayName = inviter?.name || cleanHandle.replace('@', '');
-    const avatarUrl = inviter?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150';
+
+    // Check if user has a real custom profile picture (NEVER send the lady stock photo)
+    const rawAvatar = inviter?.avatarUrl?.trim() || '';
+    const hasCustomAvatar = rawAvatar.length > 0 && !rawAvatar.includes('photo-1534528741775');
+    const avatarUrl = hasCustomAvatar ? rawAvatar : '';
+
     const appDeepLink = `instaloop://invite?from=${encodeURIComponent(cleanHandle)}`;
+    const downloadApkLink = `/download/apk?ref=${encodeURIComponent(cleanHandle)}`;
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -569,6 +813,19 @@ export const serveInvitePage = async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Instaloop • Mindful Invitation from ${displayName}</title>
+
+  <!-- Open Graph Meta Tags (Logo of app shown with invite) -->
+  <meta property="og:site_name" content="Instaloop">
+  <meta property="og:title" content="Instaloop • Mindful Invitation from ${displayName}">
+  <meta property="og:description" content="Connect with ${displayName} on Instaloop to escape infinite scrolling and exchange calming micro-pauses.">
+  <meta property="og:image" content="https://instaloop-backend.onrender.com/logo.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Instaloop • Mindful Invitation from ${displayName}">
+  <meta name="twitter:description" content="Connect with ${displayName} on Instaloop to escape infinite scrolling.">
+  <meta name="twitter:image" content="https://instaloop-backend.onrender.com/logo.png">
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -589,9 +846,9 @@ export const serveInvitePage = async (req: Request, res: Response) => {
       top: 15%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 380px;
-      height: 380px;
-      background: radial-gradient(circle, rgba(52, 211, 153, 0.18) 0%, rgba(16, 185, 129, 0.04) 50%, transparent 70%);
+      width: 420px;
+      height: 420px;
+      background: radial-gradient(circle, rgba(52, 211, 153, 0.22) 0%, rgba(16, 185, 129, 0.05) 50%, transparent 70%);
       border-radius: 50%;
       pointer-events: none;
       z-index: 0;
@@ -601,29 +858,55 @@ export const serveInvitePage = async (req: Request, res: Response) => {
       z-index: 1;
       width: 100%;
       max-width: 440px;
-      background: rgba(22, 32, 25, 0.88);
-      border: 1px solid rgba(52, 211, 153, 0.25);
+      background: rgba(22, 32, 25, 0.92);
+      border: 1px solid rgba(52, 211, 153, 0.28);
       border-radius: 28px;
       padding: 32px 24px;
       text-align: center;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.08);
       backdrop-filter: blur(16px);
     }
+    
+    /* App Logo Header */
+    .brand-header {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 16px;
+      background: rgba(14, 18, 28, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 16px rgba(52, 211, 153, 0.2);
+    }
+    .brand-logo-img {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+    }
+    .brand-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #FFFFFF;
+      letter-spacing: -0.3px;
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 14px;
+      padding: 5px 12px;
       background: rgba(52, 211, 153, 0.12);
       border: 1px solid rgba(52, 211, 153, 0.3);
       border-radius: 999px;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       color: #34D399;
       letter-spacing: 0.8px;
       text-transform: uppercase;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
+
     .avatar-wrapper {
       position: relative;
       width: 92px;
@@ -638,6 +921,25 @@ export const serveInvitePage = async (req: Request, res: Response) => {
       border: 3px solid #34D399;
       box-shadow: 0 8px 24px rgba(52, 211, 153, 0.3);
     }
+
+    /* Blank Profile Picture: Clean minimalist silhouette with emerald tone */
+    .avatar-blank {
+      width: 92px;
+      height: 92px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #1C2822, #0E1612);
+      border: 2.5px solid #34D399;
+      box-shadow: 0 8px 24px rgba(52, 211, 153, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto;
+    }
+    .avatar-blank svg {
+      width: 48px;
+      height: 48px;
+    }
+
     .title {
       font-size: 22px;
       font-weight: 700;
@@ -723,10 +1025,29 @@ export const serveInvitePage = async (req: Request, res: Response) => {
 <body>
   <div class="aura"></div>
   <div class="card">
-    <div class="pill">🌿 Secret Mindful Invite</div>
-    <div class="avatar-wrapper">
-      <img src="${avatarUrl}" alt="${displayName}" class="avatar-img">
+    
+    <!-- 1. App Brand Logo & Title -->
+    <div class="brand-header">
+      <img src="/logo.png" alt="Instaloop Logo" class="brand-logo-img" />
+      <span class="brand-title">Instaloop</span>
     </div>
+
+    <div><span class="pill">🌿 Secret Mindful Invite</span></div>
+
+    <!-- 2. Inviter Avatar (Selected avatar if available, otherwise clean blank profile picture) -->
+    <div class="avatar-wrapper">
+      ${
+        hasCustomAvatar
+          ? `<img src="${avatarUrl}" alt="${displayName}" class="avatar-img">`
+          : `<div class="avatar-blank">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+            </div>`
+      }
+    </div>
+
     <h1 class="title">${displayName}</h1>
     <p class="subtitle">
       has invited you to escape infinite scrolling and join <span class="highlight">Instaloop</span>.<br/>
@@ -738,8 +1059,8 @@ export const serveInvitePage = async (req: Request, res: Response) => {
       ✨ Open in Instaloop App
     </a>
 
-    <!-- Option B: Download APK if not installed -->
-    <a href="/download/apk" class="btn-download">
+    <!-- Option B: Download APK if not installed (primes auto-connect on download) -->
+    <a href="${downloadApkLink}" class="btn-download" id="downloadBtn" onclick="copyInviteCode()">
       📥 Download App (Android APK)
     </a>
 
@@ -756,14 +1077,16 @@ export const serveInvitePage = async (req: Request, res: Response) => {
   <script>
     function copyInviteCode() {
       const text = "${cleanHandle}";
-      navigator.clipboard.writeText(text).then(() => {
-        document.getElementById('copyStatus').innerText = '✓ Copied to clipboard! Open app to connect.';
-      }).catch(() => {
-        document.getElementById('copyStatus').innerText = 'Code: ' + text;
-      });
+      try {
+        navigator.clipboard.writeText(text).then(() => {
+          document.getElementById('copyStatus').innerText = '✓ Copied to clipboard! When app opens you will connect automatically.';
+        }).catch(() => {
+          document.getElementById('copyStatus').innerText = 'Code: ' + text;
+        });
+      } catch(_) {}
     }
 
-    // Try auto-copy on mobile page load so clipboard is primed
+    // Try auto-copy on mobile page load so clipboard is primed when they install
     window.addEventListener('load', () => {
       try {
         navigator.clipboard.writeText("${cleanHandle}").then(() => {

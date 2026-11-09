@@ -6,6 +6,7 @@ import {
   respondToFriendRequest,
   getFriendsList,
   connectViaSecretInvite,
+  autoConnectOnDownload,
 } from '../controllers/friends.controller';
 
 const router = Router();
@@ -27,5 +28,8 @@ router.get('/list', getFriendsList);
 
 // Connect via Secret Invite Link (Instant mutual connection)
 router.post('/secret-invite-connect', connectViaSecretInvite);
+
+// Auto-connect on app launch after downloading via invite link
+router.get('/auto-connect-download', autoConnectOnDownload);
 
 export default router;

@@ -3,7 +3,7 @@ import { AuthRequest } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
 import { io } from '../server';
 
-// Initial gentle welcome pause for new mindful journey
+// Initial gentle welcome pause for new mindful journey (no lady photo fallback)
 const INITIAL_MOCK_MESSAGES = [
   {
     id: 'm-welcome',
@@ -25,7 +25,87 @@ const INITIAL_MOCK_MESSAGES = [
   },
 ];
 
-let inMemoryMessages = [...INITIAL_MOCK_MESSAGES];
+let inMemoryMessages: any[] = [...INITIAL_MOCK_MESSAGES];
+
+/**
+ * Resiliently find or create a user in the Prisma database.
+ * Ensures foreign key constraints on senderId and receiverId never fail!
+ */
+export async function resolveUser(
+  identifier?: string,
+  email?: string,
+  handle?: string,
+  name?: string
+): Promise<any> {
+  const candidates = [identifier, email, handle].filter(Boolean) as string[];
+  for (const c of candidates) {
+    const clean = c.trim().toLowerCase();
+    const handleWithAt = clean.startsWith('@') ? clean : `@${clean}`;
+    const handleWithoutAt = clean.startsWith('@') ? clean.substring(1) : clean;
+
+    const user = await prisma.user
+      .findFirst({
+        where: {
+          OR: [
+            { id: c.trim() },
+            { email: clean },
+            { handle: handleWithAt },
+            { handle: handleWithoutAt },
+            { handle: c.trim() },
+          ],
+        },
+      })
+      .catch(() => null);
+
+    if (user) return user;
+  }
+
+  // If not found in DB, auto-create a user record so foreign key constraints always succeed
+  const preferredEmail = (
+    email ||
+    (identifier && identifier.includes('@') ? identifier : '') ||
+    `${(handle || identifier || 'user').replace('@', '')}@instaloop.mindful`
+  )
+    .trim()
+    .toLowerCase();
+
+  const preferredHandle =
+    handle?.trim() ||
+    (preferredEmail.includes('@')
+      ? `@${preferredEmail.split('@')[0]}`
+      : `@${(identifier || 'user').replace('@', '')}`);
+
+  const preferredName = name?.trim() || preferredHandle.replace('@', '');
+
+  const createdUser = await prisma.user
+    .create({
+      data: {
+        email: preferredEmail,
+        handle: preferredHandle,
+        name: preferredName,
+      },
+    })
+    .catch(async () => {
+      // If creation threw duplicate key error, find that existing user
+      return await prisma.user
+        .findFirst({
+          where: {
+            OR: [{ email: preferredEmail }, { handle: preferredHandle }],
+          },
+        })
+        .catch(() => null);
+    });
+
+  if (createdUser) return createdUser;
+
+  // Fallback object if DB is offline
+  return {
+    id: identifier || preferredEmail.split('@')[0],
+    email: preferredEmail,
+    handle: preferredHandle,
+    name: preferredName,
+  };
+}
 
 /**
  * Auto-delete / expire all messages in inbox older than 15 days.
@@ -37,13 +117,15 @@ export const purgeExpiredMessages = async () => {
     const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
 
     // 1. Delete expired records from Prisma DB (older than 15 days)
-    await prisma.pauseMessage.deleteMany({
-      where: {
-        createdAt: {
-          lt: fifteenDaysAgo,
+    await prisma.pauseMessage
+      .deleteMany({
+        where: {
+          createdAt: {
+            lt: fifteenDaysAgo,
+          },
         },
-      },
-    }).catch(() => null);
+      })
+      .catch(() => null);
 
     // 2. Filter in-memory messages older than 15 days
     inMemoryMessages = inMemoryMessages.filter((m: any) => {
@@ -67,29 +149,60 @@ export const purgeExpiredMessages = async () => {
 
 export const getInbox = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.id || 'usr-mindful';
+    const queryEmail = (req.query.email as string)?.trim().toLowerCase();
+    const queryHandle = (req.query.handle as string)?.trim();
+    const queryUserId = (req.query.userId as string)?.trim();
+    const headerEmail = (req.headers['x-user-email'] as string)?.trim().toLowerCase();
+    const headerHandle = (req.headers['x-user-handle'] as string)?.trim();
+    const headerUserId = (req.headers['x-user-id'] as string)?.trim();
+
+    const userEmail = queryEmail || headerEmail || req.user?.email;
+    const userHandle = queryHandle || headerHandle;
+    const rawUserId = queryUserId || headerUserId || req.user?.id;
 
     // Auto-purge messages older than 15 days before serving
     await purgeExpiredMessages();
 
-    // Attempt DB fetch if connected
-    const dbMessages = await prisma.pauseMessage.findMany({
-      where: { receiverId: userId },
-      include: { sender: { select: { name: true, handle: true, avatarUrl: true } } },
-      orderBy: { createdAt: 'desc' },
-    }).catch(() => null);
+    // Resolve current user in DB
+    const currentUser = await resolveUser(rawUserId, userEmail, userHandle);
+    const currentId = currentUser?.id || rawUserId || 'usr-mindful';
+    const cleanEmail = (currentUser?.email || userEmail || '').toLowerCase();
+    const cleanHandle = (currentUser?.handle || userHandle || '').toLowerCase();
+    const handleWithoutAt = cleanHandle.startsWith('@') ? cleanHandle.substring(1) : cleanHandle;
+    const handleWithAt = cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`;
 
-    if (dbMessages && dbMessages.length > 0) {
-      const formatted = dbMessages.map((m) => {
-        const elapsedDays = Math.floor((Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    const messagesMap = new Map<string, any>();
+
+    // 1. Fetch DB Messages if available
+    if (currentUser?.id) {
+      const dbMessages = await prisma.pauseMessage
+        .findMany({
+          where: {
+            OR: [
+              { receiverId: currentUser.id },
+              ...(rawUserId && rawUserId !== currentUser.id ? [{ receiverId: rawUserId }] : []),
+            ],
+          },
+          include: { sender: { select: { id: true, name: true, handle: true, avatarUrl: true } } },
+          orderBy: { createdAt: 'desc' },
+        })
+        .catch(() => []);
+
+      for (const m of dbMessages) {
+        const elapsedDays = Math.floor(
+          (Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+        );
         const daysLeft = Math.max(0, 15 - elapsedDays);
 
-        return {
+        let cleanAvatar = m.sender?.avatarUrl || '';
+        if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+
+        messagesMap.set(m.id, {
           id: m.id,
           senderId: m.senderId,
           senderName: m.sender?.name || 'Mindful Friend',
           senderRole: m.sender?.handle || 'Presence Sovereign',
-          avatarUrl: m.sender?.avatarUrl || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAfyYJT2xMkFLSVku_3SkpcUpwAcSiWn2ni6F1Rq8hfVT_NtHiHJSG6J2HqJhu-TlQm6Pf8K-HPj7fdpjf0kjpPxo0RD_QayZWSkP2lJnvwpN1HdbonYyzCrE_lSTQn8epa6euUpIwq3pNUBfO-5wsBYsLdiM789U8EtbViuOO9i0Zjl9gy2KSjN0PDoHekJ2A0ff2oep7jWB9Ocrag9034nrkyux6b4l0wVG7nGwY-Dgjl_r_y2e7p',
+          avatarUrl: cleanAvatar,
           title: m.title,
           note: m.note,
           durationSeconds: m.durationSeconds,
@@ -100,25 +213,57 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
           timestamp: 'Recently',
           createdAt: m.createdAt.toISOString(),
           expiresInDays: daysLeft,
-          sender: m.sender,
-        };
-      });
-      return res.json(formatted);
+          sender: {
+            ...m.sender,
+            avatarUrl: cleanAvatar,
+          },
+        });
+      }
     }
 
-    const formattedInMemory = inMemoryMessages.map((m: any) => {
-      let createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
-      if (isNaN(createdDate.getTime())) createdDate = new Date();
-      const elapsedDays = Math.floor((Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24));
-      const daysLeft = Math.max(0, 15 - elapsedDays);
-      return {
-        ...m,
-        createdAt: createdDate.toISOString(),
-        expiresInDays: daysLeft,
-      };
-    });
+    // 2. Fetch and merge in-memory messages targeted to this user or 'all'
+    for (const m of inMemoryMessages) {
+      const isTargeted =
+        m.receiverId === 'all' ||
+        m.receiverId === currentId ||
+        (cleanEmail && m.receiverEmail?.toLowerCase() === cleanEmail) ||
+        (cleanHandle &&
+          (m.receiverHandle?.toLowerCase() === handleWithAt ||
+            m.receiverHandle?.toLowerCase() === handleWithoutAt)) ||
+        (rawUserId && m.receiverId === rawUserId);
 
-    return res.json(formattedInMemory);
+      if (isTargeted && !messagesMap.has(m.id)) {
+        let createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
+        if (isNaN(createdDate.getTime())) createdDate = new Date();
+        const elapsedDays = Math.floor(
+          (Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24)
+        );
+        const daysLeft = Math.max(0, 15 - elapsedDays);
+
+        let cleanAvatar = m.avatarUrl || m.senderAvatarUrl || '';
+        if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+
+        messagesMap.set(m.id, {
+          ...m,
+          avatarUrl: cleanAvatar,
+          createdAt: createdDate.toISOString(),
+          expiresInDays: daysLeft,
+        });
+      }
+    }
+
+    // If still empty and no friend messages exist, provide initial gentle welcome pause
+    if (messagesMap.size === 0) {
+      for (const m of INITIAL_MOCK_MESSAGES) {
+        messagesMap.set(m.id, m);
+      }
+    }
+
+    const result = Array.from(messagesMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return res.json(result);
   } catch (error) {
     return res.json(inMemoryMessages);
   }
@@ -126,23 +271,47 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
 
 export const sendPause = async (req: AuthRequest, res: Response) => {
   try {
-    const { receiverId, title, note, durationSeconds, tag } = req.body;
-    const senderId = req.body.senderId || req.user?.id || 'usr-mindful';
-    const senderName = req.body.senderName || req.user?.name || req.user?.handle || 'Mindful Friend';
-    const senderRole = req.body.senderRole || 'Presence Sovereign';
-    const avatarUrl =
-      req.body.senderAvatarUrl ||
-      req.body.avatarUrl ||
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuCmvTvw2vUiNi2t66ONaWIluHLI9OBm4euIQS92BMXtTJsfDOJvur_Mpba2Cc6f2EHULwiVe43Uel0hRAFmMYj68Pa8g2PpXfgJNzAh4l28Mm4PNy4Y-UuDKEH4_yKjVkF9XM-zix8Z-VbIn5qjNQVW7_xxgvBqTz-en8iQoe8g4iCUsUjz6jsgWhkcfCe2NsA9cY2xTcN6HhvG08UJD4AvnBJA3tOIvgLHbwS4CoBIYejaOUVpiBPD';
+    const {
+      receiverId,
+      receiverEmail,
+      receiverHandle,
+      receiverName,
+      title,
+      note,
+      durationSeconds,
+      tag,
+    } = req.body;
+
+    const senderEmail = (req.body.senderEmail || req.user?.email || '').trim().toLowerCase();
+    const senderHandle = (req.body.senderHandle || '').trim();
+    const rawSenderId = req.body.senderId || req.user?.id || 'usr-mindful';
+    const senderName = req.body.senderName || req.user?.name || senderHandle.replace('@', '') || 'Mindful Friend';
+    const senderRole = req.body.senderRole || senderHandle || 'Presence Sovereign';
+
+    let cleanAvatar = req.body.senderAvatarUrl || req.body.avatarUrl || '';
+    if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
+
+    // 1. Resolve DB records for both sender and receiver to guarantee foreign keys
+    const senderUser = await resolveUser(rawSenderId, senderEmail, senderHandle, senderName);
+    const receiverUser = await resolveUser(receiverId, receiverEmail, receiverHandle, receiverName);
+
+    const validSenderId = senderUser?.id || rawSenderId;
+    const validReceiverId = receiverUser?.id || receiverId || 'all';
 
     const now = new Date();
+    const pauseId = `m-${Date.now()}`;
+
     const newPause = {
-      id: `m-${Date.now()}`,
-      senderId,
-      receiverId: receiverId || 'all',
+      id: pauseId,
+      senderId: validSenderId,
+      senderEmail: senderUser?.email || senderEmail,
+      senderHandle: senderUser?.handle || senderHandle,
       senderName,
       senderRole,
-      avatarUrl,
+      avatarUrl: cleanAvatar,
+      receiverId: validReceiverId,
+      receiverEmail: receiverUser?.email || receiverEmail,
+      receiverHandle: receiverUser?.handle || receiverHandle,
       title: title || 'Gift of Presence',
       note: note || 'A mindful intentional pause sent with care.',
       durationSeconds: Number(durationSeconds) || 15,
@@ -153,26 +322,60 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       timestamp: 'Just now',
       createdAt: now.toISOString(),
       expiresInDays: 15,
+      sender: {
+        id: validSenderId,
+        name: senderName,
+        handle: senderUser?.handle || senderHandle,
+        avatarUrl: cleanAvatar,
+      },
     };
 
     inMemoryMessages.unshift(newPause);
 
-    // Save to DB if available
-    prisma.pauseMessage.create({
-      data: {
-        senderId,
-        receiverId: receiverId || 'friend-alex',
-        title: newPause.title,
-        note: newPause.note,
-        durationSeconds: newPause.durationSeconds,
-        tag: newPause.tag,
-      },
-    }).catch(() => {});
+    // 2. Persist to Prisma DB
+    if (senderUser?.id && receiverUser?.id && senderUser.id !== receiverUser.id) {
+      const dbRecord = await prisma.pauseMessage
+        .create({
+          data: {
+            senderId: senderUser.id,
+            receiverId: receiverUser.id,
+            title: newPause.title,
+            note: newPause.note,
+            durationSeconds: newPause.durationSeconds,
+            tag: newPause.tag,
+          },
+        })
+        .catch((err) => {
+          console.warn('Prisma pause create note:', err.message);
+          return null;
+        });
 
-    // Broadcast in real-time to recipient's room without duplicating
+      if (dbRecord) {
+        newPause.id = dbRecord.id;
+      }
+    }
+
+    // 3. Broadcast in real-time via Socket.io to all candidate rooms
     if (io) {
-      if (receiverId && receiverId !== 'all') {
-        io.to(receiverId).emit('new_pause_received', newPause);
+      const targetRooms = new Set<string>();
+      if (receiverUser?.id) targetRooms.add(receiverUser.id);
+      if (receiverUser?.email) targetRooms.add(receiverUser.email.toLowerCase());
+      if (receiverUser?.handle) {
+        targetRooms.add(receiverUser.handle.toLowerCase());
+        targetRooms.add(receiverUser.handle.replace('@', '').toLowerCase());
+      }
+      if (receiverId && receiverId !== 'all') targetRooms.add(receiverId);
+      if (receiverEmail) targetRooms.add(receiverEmail.toLowerCase());
+      if (receiverHandle) {
+        targetRooms.add(receiverHandle.toLowerCase());
+        targetRooms.add(receiverHandle.replace('@', '').toLowerCase());
+      }
+
+      if (targetRooms.size > 0) {
+        for (const room of targetRooms) {
+          io.to(room).emit('new_pause_received', newPause);
+          io.to(room).emit('mindful_pause_broadcast', newPause);
+        }
       } else {
         io.to('all').emit('new_pause_received', newPause);
       }
@@ -194,10 +397,12 @@ export const completePause = async (req: AuthRequest, res: Response) => {
       inMemoryMessages[index].isRead = true;
     }
 
-    prisma.pauseMessage.update({
-      where: { id },
-      data: { isCompleted: true, isRead: true },
-    }).catch(() => {});
+    prisma.pauseMessage
+      .update({
+        where: { id },
+        data: { isCompleted: true, isRead: true },
+      })
+      .catch(() => {});
 
     return res.json({
       success: true,
@@ -218,10 +423,12 @@ export const stepAwayEarly = async (req: AuthRequest, res: Response) => {
       inMemoryMessages[index].isRead = true;
     }
 
-    prisma.pauseMessage.update({
-      where: { id },
-      data: { steppedAwayEarly: true, isRead: true },
-    }).catch(() => {});
+    prisma.pauseMessage
+      .update({
+        where: { id },
+        data: { steppedAwayEarly: true, isRead: true },
+      })
+      .catch(() => {});
 
     return res.json({
       success: true,
@@ -238,9 +445,11 @@ export const deletePause = async (req: AuthRequest, res: Response) => {
     inMemoryMessages = inMemoryMessages.filter((m) => m.id !== id);
 
     // Delete from DB if present
-    await prisma.pauseMessage.deleteMany({
-      where: { id },
-    }).catch(() => {});
+    await prisma.pauseMessage
+      .deleteMany({
+        where: { id },
+      })
+      .catch(() => {});
 
     return res.json({
       success: true,
@@ -262,9 +471,11 @@ export const bulkDeletePauses = async (req: AuthRequest, res: Response) => {
     const idsSet = new Set(ids.map(String));
     inMemoryMessages = inMemoryMessages.filter((m) => !idsSet.has(m.id));
 
-    await prisma.pauseMessage.deleteMany({
-      where: { id: { in: Array.from(idsSet) } },
-    }).catch(() => {});
+    await prisma.pauseMessage
+      .deleteMany({
+        where: { id: { in: Array.from(idsSet) } },
+      })
+      .catch(() => {});
 
     return res.json({
       success: true,

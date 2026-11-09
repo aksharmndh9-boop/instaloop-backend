@@ -57,6 +57,18 @@ app.use('/api/companions', companionRoutes);
 app.use('/api/rhythm', rhythmRoutes);
 app.use('/api/friends', friendsRoutes);
 
+// Serve static assets from public/ (including logo.png and instaloop-release.apk)
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Explicit Logo Route
+app.get('/logo.png', (req, res) => {
+  const logoPath = path.join(__dirname, '../public/logo.png');
+  if (fs.existsSync(logoPath)) {
+    return res.sendFile(logoPath);
+  }
+  return res.redirect('https://lh3.googleusercontent.com/aida-public/AB6AXuD3n8mJYq9x0Z3hj1V0pKSHxokroOSrB5eRhM8UikIwPie4J7yns7ANpFY5lPJw09QYzoA1uKT9XJqpXC7-lrJOD7JTmhVaTCkNBA34M9q1k74x4lMINi1A2XeMhshEfmnaftQzJ5HSOFxspHydr1jocDZdoUuNcyBkRPPOybBK4SSkJyHO7sL7aP0Ui4QjSynCDKg_k7pcc1IL_vg3dC-83rP19WQCqxDmW3hTsn_sqMgFyYVIDMeG');
+});
+
 // Secret Invite Landing Pages (Open in App or Download)
 app.get('/privacy', servePrivacyPolicy);
 app.get('/terms', servePrivacyPolicy);
@@ -64,8 +76,17 @@ app.get('/invite/:handle?', serveInvitePage);
 app.get('/invite', serveInvitePage);
 app.get('/join', serveInvitePage);
 
-// Direct APK Download Endpoint
+// Direct APK Download Endpoint with Invite Referrer Capture
 app.get('/download/apk', (req, res) => {
+  // If download includes invite ref (e.g. /download/apk?ref=@inviter), record IP for auto-connect
+  const ref = (req.query.ref as string)?.trim();
+  if (ref) {
+    try {
+      const { recordPendingInviteIp } = require('./controllers/friends.controller');
+      recordPendingInviteIp(req, ref);
+    } catch (_) {}
+  }
+
   const localApk = path.join(__dirname, '../public/instaloop-release.apk');
   const rootApk = path.join(__dirname, '../../instaloop-release.apk');
   if (fs.existsSync(localApk)) {

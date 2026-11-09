@@ -29,12 +29,27 @@ function formatUserProfile(user: any) {
   if (av.startsWith('https://images.unsplash.com/photo-1535713875002-d1d0cf377fde')) {
     av = '';
   }
+
+  // Sanctuary Pro Subscription validation: tied permanently to Google ID
+  let isPro = user.isProUser === true;
+  let proExpires = user.proExpiresAt || '';
+  if (proExpires) {
+    try {
+      const dueTime = new Date(proExpires).getTime();
+      if (!isNaN(dueTime)) {
+        isPro = dueTime > Date.now();
+      }
+    } catch (_) {}
+  }
+
   return {
     id: user.id || 'usr-default',
     email: user.email || '',
     name: user.name || (user.email ? user.email.split('@')[0].replace(/^./, (c: string) => c.toUpperCase()) : 'Mindful Friend'),
     handle: user.handle || (user.email ? `@${user.email.split('@')[0]}` : '@friend'),
     avatarUrl: av,
+    isProUser: isPro,
+    proExpiresAt: proExpires,
     streakDays: user.streakDays ?? 1,
     reclaimedToday: user.reclaimedToday ?? 0,
     loopsBrokenToday: user.loopsBrokenToday ?? 0,
@@ -368,6 +383,8 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
     if (loopsBrokenToday !== undefined) updatedData.loopsBrokenToday = Number(loopsBrokenToday);
     if (reelsAvoidedToday !== undefined) updatedData.reelsAvoidedToday = Number(reelsAvoidedToday);
     if (completedPausesToday !== undefined) updatedData.completedPausesToday = Number(completedPausesToday);
+    if (req.body.isProUser !== undefined) updatedData.isProUser = Boolean(req.body.isProUser);
+    if (req.body.proExpiresAt !== undefined) updatedData.proExpiresAt = String(req.body.proExpiresAt);
     updatedData.lastActiveDate = lastActiveDate || existing?.lastActiveDate || todayDate;
     if (spiritualMantra !== undefined) updatedData.spiritualMantra = spiritualMantra;
     if (spiritualSeason !== undefined) updatedData.spiritualSeason = spiritualSeason;
@@ -455,5 +472,54 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Update profile error:', error);
     return res.status(500).json({ error: 'Failed to update profile' });
+  }
+};
+
+/**
+ * Persist Pro Subscription linked permanently to the user's Google ID.
+ * Survives accidental logouts, phone restarts, and app updates throughout the entire due period.
+ */
+export const syncProSubscription = async (req: Request, res: Response) => {
+  try {
+    const { email, isProUser, proExpiresAt, plan } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Google email is required' });
+    }
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    // Default 1 year (365 days) due period if not explicitly set
+    const calculatedExpiry =
+      proExpiresAt && String(proExpiresAt).trim().length > 0
+        ? String(proExpiresAt).trim()
+        : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+    const existing = inMemoryProfiles.get(cleanEmail) || {};
+    const updated = {
+      ...existing,
+      email: cleanEmail,
+      isProUser: isProUser !== undefined ? Boolean(isProUser) : true,
+      proExpiresAt: calculatedExpiry,
+      proSubscriptionPlan: plan || 'annual',
+    };
+
+    const formatted = formatUserProfile(updated);
+    inMemoryProfiles.set(cleanEmail, formatted);
+    if (formatted.handle) inMemoryProfiles.set(formatted.handle, formatted);
+    if (formatted.id) inMemoryProfiles.set(formatted.id, formatted);
+
+    // Broadcast update over sockets
+    if (io && formatted.id) {
+      io.to(formatted.id).emit('user_profile_updated', formatted);
+    }
+
+    return res.json({
+      success: true,
+      isProUser: formatted.isProUser,
+      proExpiresAt: formatted.proExpiresAt,
+      message: 'Sanctuary Pro subscription active and tied to your Google Account.',
+      user: formatted,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to sync Pro subscription' });
   }
 };

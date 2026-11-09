@@ -14,8 +14,14 @@ export const setupPauseSockets = (io: Server) => {
 
     // Join user's individual room for targeted pause delivery
     socket.on('join_user_room', (userId: string) => {
-      socket.join(userId);
-      console.log(`User joined mindful channel: ${userId}`);
+      if (!userId) return;
+      const clean = String(userId).trim();
+      socket.join(clean);
+      socket.join(clean.toLowerCase());
+      const noAt = clean.replace('@', '').toLowerCase();
+      socket.join(noAt);
+      socket.join(`@${noAt}`);
+      console.log(`User joined mindful channels: ${clean}, ${noAt}, @${noAt}`);
     });
 
     // Broadcast presence ping
