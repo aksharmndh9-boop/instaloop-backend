@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import genAI from '../config/gemini';
 import prisma from '../config/db';
 import { io } from '../server';
+import { addInboxMessage } from './inbox.controller';
 
 const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
   return Promise.race([
@@ -351,12 +352,15 @@ Respond ONLY with valid JSON in this exact format:
         .catch(() => {});
     }
 
-    // Broadcast live over WebSockets so active clients receive it instantly with sound
-    if (io) {
-      if (userId) {
-        io.to(userId).emit('new_pause_received', newPause);
-      }
-      io.emit('new_pause_received', newPause);
+    // Save to in-memory messages for 15-day inbox persistence
+    addInboxMessage(newPause);
+
+    // Broadcast live over WebSockets ONLY to the requesting user (no global broadcast)
+    if (io && userId) {
+      const cleanUser = String(userId).trim().toLowerCase();
+      io.to(userId).emit('new_pause_received', newPause);
+      io.to(cleanUser).emit('new_pause_received', newPause);
+      io.to(cleanUser.replace('@', '')).emit('new_pause_received', newPause);
     }
 
     return res.status(201).json(newPause);

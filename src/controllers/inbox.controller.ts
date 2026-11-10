@@ -25,7 +25,16 @@ const INITIAL_MOCK_MESSAGES = [
   },
 ];
 
-let inMemoryMessages: any[] = [...INITIAL_MOCK_MESSAGES];
+export let inMemoryMessages: any[] = [...INITIAL_MOCK_MESSAGES];
+
+export const addInboxMessage = (msg: any) => {
+  const existing = inMemoryMessages.findIndex((m) => m.id === msg.id);
+  if (existing === -1) {
+    inMemoryMessages.unshift(msg);
+  } else {
+    inMemoryMessages[existing] = msg;
+  }
+};
 
 /**
  * Resiliently find or create a user in the Prisma database.
@@ -174,14 +183,28 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
     const messagesMap = new Map<string, any>();
 
     // 1. Fetch DB Messages if available
-    if (currentUser?.id) {
+    const possibleReceiverIds = new Set<string>();
+    if (currentUser?.id) possibleReceiverIds.add(currentUser.id);
+    if (rawUserId) possibleReceiverIds.add(rawUserId);
+
+    const matchedUsers = await prisma.user
+      .findMany({
+        where: {
+          OR: [
+            ...(cleanEmail ? [{ email: cleanEmail }] : []),
+            ...(cleanHandle ? [{ handle: handleWithAt }, { handle: handleWithoutAt }] : []),
+          ],
+        },
+        select: { id: true },
+      })
+      .catch(() => []);
+    for (const u of matchedUsers) possibleReceiverIds.add(u.id);
+
+    if (possibleReceiverIds.size > 0) {
       const dbMessages = await prisma.pauseMessage
         .findMany({
           where: {
-            OR: [
-              { receiverId: currentUser.id },
-              ...(rawUserId && rawUserId !== currentUser.id ? [{ receiverId: rawUserId }] : []),
-            ],
+            receiverId: { in: Array.from(possibleReceiverIds) },
           },
           include: { sender: { select: { id: true, name: true, handle: true, avatarUrl: true } } },
           orderBy: { createdAt: 'desc' },
@@ -375,8 +398,6 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
         for (const room of targetRooms) {
           io.to(room).emit('new_pause_received', newPause);
         }
-      } else {
-        io.to('all').emit('new_pause_received', newPause);
       }
     }
 
