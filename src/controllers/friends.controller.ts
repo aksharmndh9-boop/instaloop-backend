@@ -1032,23 +1032,34 @@ export const serveInvitePage = async (req: Request, res: Response) => {
       transform: translateY(-2px);
       box-shadow: 0 14px 28px rgba(16, 185, 129, 0.4);
     }
-    .btn-download {
-      display: block;
+    .btn-playstore {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
       width: 100%;
-      padding: 14px 20px;
-      background: rgba(30, 41, 35, 0.9);
-      border: 1px solid rgba(52, 211, 153, 0.4);
-      color: #34D399;
-      font-weight: 600;
-      font-size: 15px;
+      padding: 16px 20px;
+      background: #0B0F19;
+      border: 1.5px solid #34D399;
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 16px;
       text-decoration: none;
       border-radius: 999px;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.25);
       transition: all 0.2s ease;
     }
-    .btn-download:hover {
-      background: rgba(40, 56, 47, 0.9);
-      border-color: #34D399;
+    .btn-playstore:hover {
+      transform: translateY(-2px);
+      border-color: #10B981;
+      box-shadow: 0 12px 30px rgba(52, 211, 153, 0.4);
+      background: #111827;
+    }
+    .btn-playstore svg {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
     }
     .code-box {
       background: rgba(15, 23, 19, 0.7);
@@ -1116,9 +1127,15 @@ export const serveInvitePage = async (req: Request, res: Response) => {
       ✨ Open in Instaloop App
     </a>
 
-    <!-- Option B: Download APK if not installed (primes auto-connect on download) -->
-    <a href="${downloadApkLink}" class="btn-download" id="downloadBtn" onclick="copyInviteCode()">
-      📥 Download App (Android APK)
+    <!-- Option B: Install from Google Play Store (Auto-pairs upon opening app) -->
+    <a href="https://play.google.com/store/apps/details?id=com.instaloop.app&referrer=inviter%3D${encodeURIComponent(cleanHandle)}" class="btn-playstore" id="playStoreBtn" onclick="copyInviteCode()">
+      <svg viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M3.6 1.4L13.8 11.6 3.6 21.8C3.2 21.4 3 20.8 3 20V3.2C3 2.4 3.2 1.8 3.6 1.4z"/>
+        <path fill="#FBBC04" d="M17.3 8.1L13.8 11.6 3.6 1.4C4.1 1.1 4.7 1.1 5.3 1.4L17.3 8.1z"/>
+        <path fill="#34A853" d="M17.3 15.1L5.3 21.8C4.7 22.1 4.1 22.1 3.6 21.8L13.8 11.6 17.3 15.1z"/>
+        <path fill="#EA4335" d="M20.8 10.1L17.3 8.1 13.8 11.6 17.3 15.1 20.8 13.1C21.8 12.5 21.8 10.7 20.8 10.1z"/>
+      </svg>
+      <span>Install from Google Play</span>
     </a>
 
     <!-- Option C: Copy code -->

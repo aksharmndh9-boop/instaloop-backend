@@ -21,7 +21,7 @@ const INITIAL_MOCK_MESSAGES = [
     steppedAwayEarly: false,
     timestamp: 'Just now',
     createdAt: new Date().toISOString(),
-    expiresInDays: 15,
+    expiresInDays: 7,
   },
 ];
 
@@ -117,27 +117,44 @@ export async function resolveUser(
 }
 
 /**
- * Auto-delete / expire all messages in inbox older than 15 days.
- * CRITICAL GUARANTEE: User stillness streaks (streakDays) and presence pacts
- * remain 100% intact even after messages expire and are deleted.
+ * Auto-delete / expire all messages in inbox older than 7 days.
+ * CRITICAL GUARANTEE: Streak messages among friends, user stillness streaks (streakDays),
+ * and presence pacts NEVER expire and remain 100% intact.
  */
 export const purgeExpiredMessages = async () => {
   try {
-    const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    // 1. Delete expired records from Prisma DB (older than 15 days)
+    // 1. Delete expired records from Prisma DB (older than 7 days, excluding friend streak messages)
     await prisma.pauseMessage
       .deleteMany({
         where: {
           createdAt: {
-            lt: fifteenDaysAgo,
+            lt: sevenDaysAgo,
+          },
+          NOT: {
+            OR: [
+              { tag: { contains: 'streak' } },
+              { tag: { contains: 'Streak' } },
+              { tag: { contains: 'pact' } },
+              { tag: { contains: 'Pact' } },
+              { title: { contains: 'streak' } },
+              { title: { contains: 'Streak' } },
+              { title: { contains: 'pact' } },
+              { title: { contains: 'Pact' } },
+            ],
           },
         },
       })
       .catch(() => null);
 
-    // 2. Filter in-memory messages older than 15 days
+    // 2. Filter in-memory messages older than 7 days (excluding friend streak messages)
     inMemoryMessages = inMemoryMessages.filter((m: any) => {
+      const tag = (m.tag || '').toLowerCase();
+      const title = (m.title || '').toLowerCase();
+      const isStreak = tag.includes('streak') || tag.includes('pact') || title.includes('streak') || title.includes('pact');
+      if (isStreak) return true; // Streak messages never expire!
+
       let createdTime: number | null = null;
       if (m.createdAt) {
         const parsed = new Date(m.createdAt).getTime();
@@ -147,7 +164,7 @@ export const purgeExpiredMessages = async () => {
         if (!isNaN(num) && num > 1000000000000) createdTime = num;
       }
       if (createdTime !== null) {
-        return createdTime >= fifteenDaysAgo.getTime();
+        return createdTime >= sevenDaysAgo.getTime();
       }
       return true;
     });
@@ -212,10 +229,13 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
         .catch(() => []);
 
       for (const m of dbMessages) {
+        const tag = (m.tag || '').toLowerCase();
+        const title = (m.title || '').toLowerCase();
+        const isStreak = tag.includes('streak') || tag.includes('pact') || title.includes('streak') || title.includes('pact');
         const elapsedDays = Math.floor(
           (Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24)
         );
-        const daysLeft = Math.max(0, 15 - elapsedDays);
+        const daysLeft = isStreak ? 999 : Math.max(0, 7 - elapsedDays);
 
         let cleanAvatar = m.sender?.avatarUrl || '';
         if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
@@ -246,14 +266,26 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
 
     // 2. Fetch and merge in-memory messages targeted to this user or 'all'
     for (const m of inMemoryMessages) {
+      const tag = (m.tag || '').toLowerCase();
+      const title = (m.title || '').toLowerCase();
+      const isStreak = tag.includes('streak') || tag.includes('pact') || title.includes('streak') || title.includes('pact');
+
       const isTargeted =
         m.receiverId === 'all' ||
         m.receiverId === currentId ||
-        (cleanEmail && m.receiverEmail?.toLowerCase() === cleanEmail) ||
-        (cleanHandle &&
-          (m.receiverHandle?.toLowerCase() === handleWithAt ||
-            m.receiverHandle?.toLowerCase() === handleWithoutAt)) ||
-        (rawUserId && m.receiverId === rawUserId);
+        m.receiverId === currentUser?.id ||
+        possibleReceiverIds.has(m.receiverId) ||
+        (cleanEmail && (
+          m.receiverEmail?.toLowerCase() === cleanEmail ||
+          m.receiverId?.toLowerCase() === cleanEmail
+        )) ||
+        (cleanHandle && (
+          m.receiverHandle?.toLowerCase() === handleWithAt ||
+          m.receiverHandle?.toLowerCase() === handleWithoutAt ||
+          m.receiverId?.toLowerCase() === handleWithAt ||
+          m.receiverId?.toLowerCase() === handleWithoutAt
+        )) ||
+        (rawUserId && (m.receiverId === rawUserId || m.receiverId?.toLowerCase() === rawUserId.toLowerCase()));
 
       if (isTargeted && !messagesMap.has(m.id)) {
         let createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
@@ -261,7 +293,7 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
         const elapsedDays = Math.floor(
           (Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24)
         );
-        const daysLeft = Math.max(0, 15 - elapsedDays);
+        const daysLeft = isStreak ? 999 : Math.max(0, 7 - elapsedDays);
 
         let cleanAvatar = m.avatarUrl || m.senderAvatarUrl || '';
         if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
@@ -324,6 +356,11 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
     const now = new Date();
     const pauseId = `m-${Date.now()}`;
 
+    const isStreakMsg = (tag || '').toLowerCase().includes('streak') ||
+                        (tag || '').toLowerCase().includes('pact') ||
+                        (title || '').toLowerCase().includes('streak') ||
+                        (title || '').toLowerCase().includes('pact');
+
     const newPause = {
       id: pauseId,
       senderId: validSenderId,
@@ -344,7 +381,7 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       steppedAwayEarly: false,
       timestamp: 'Just now',
       createdAt: now.toISOString(),
-      expiresInDays: 15,
+      expiresInDays: isStreakMsg ? 999 : 7,
       sender: {
         id: validSenderId,
         name: senderName,

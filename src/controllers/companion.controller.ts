@@ -325,6 +325,7 @@ Respond ONLY with valid JSON in this exact format:
       senderName: companion.name,
       senderRole: `${companion.role} • Gemini AI Companion`,
       avatarUrl: companion.avatarUrl,
+      receiverId: userId || 'all',
       title: title,
       subtitle: `Daily Mindful Intercession from ${companion.name}`,
       note: note,
@@ -334,6 +335,8 @@ Respond ONLY with valid JSON in this exact format:
       isCompleted: false,
       steppedAwayEarly: false,
       timestamp: 'Just now',
+      createdAt: now.toISOString(),
+      expiresInDays: 7,
     };
 
     // Save to database if Prisma is connected
