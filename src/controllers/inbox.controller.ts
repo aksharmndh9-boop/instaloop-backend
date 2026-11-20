@@ -117,44 +117,27 @@ export async function resolveUser(
 }
 
 /**
- * Auto-delete / expire all messages in inbox older than 7 days.
- * CRITICAL GUARANTEE: Streak messages among friends, user stillness streaks (streakDays),
- * and presence pacts NEVER expire and remain 100% intact.
+ * Auto-delete / expire all messages in inbox older than 48 hours.
+ * All messages (AI and human) expire after 48 hours and get auto-deleted.
+ * User stillness streaks (streakDays) and friends list remain 100% intact.
  */
 export const purgeExpiredMessages = async () => {
   try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
-    // 1. Delete expired records from Prisma DB (older than 7 days, excluding friend streak messages)
+    // 1. Delete expired records from Prisma DB (older than 48 hours)
     await prisma.pauseMessage
       .deleteMany({
         where: {
           createdAt: {
-            lt: sevenDaysAgo,
-          },
-          NOT: {
-            OR: [
-              { tag: { contains: 'streak' } },
-              { tag: { contains: 'Streak' } },
-              { tag: { contains: 'pact' } },
-              { tag: { contains: 'Pact' } },
-              { title: { contains: 'streak' } },
-              { title: { contains: 'Streak' } },
-              { title: { contains: 'pact' } },
-              { title: { contains: 'Pact' } },
-            ],
+            lt: fortyEightHoursAgo,
           },
         },
       })
       .catch(() => null);
 
-    // 2. Filter in-memory messages older than 7 days (excluding friend streak messages)
+    // 2. Filter in-memory messages older than 48 hours
     inMemoryMessages = inMemoryMessages.filter((m: any) => {
-      const tag = (m.tag || '').toLowerCase();
-      const title = (m.title || '').toLowerCase();
-      const isStreak = tag.includes('streak') || tag.includes('pact') || title.includes('streak') || title.includes('pact');
-      if (isStreak) return true; // Streak messages never expire!
-
       let createdTime: number | null = null;
       if (m.createdAt) {
         const parsed = new Date(m.createdAt).getTime();
@@ -164,13 +147,40 @@ export const purgeExpiredMessages = async () => {
         if (!isNaN(num) && num > 1000000000000) createdTime = num;
       }
       if (createdTime !== null) {
-        return createdTime >= sevenDaysAgo.getTime();
+        return createdTime >= fortyEightHoursAgo.getTime();
       }
       return true;
     });
   } catch (err) {
     console.warn('Purge expired messages notice:', err);
   }
+};
+
+export const isAiMsg = (m: any): boolean => {
+  const tag = String(m?.tag || '').toLowerCase();
+  const role = String(m?.senderRole || '').toLowerCase();
+  const name = String(m?.senderName || m?.sender?.name || '').toLowerCase();
+  const id = String(m?.id || '').toLowerCase();
+  const sub = String(m?.subtitle || '').toLowerCase();
+
+  return (
+    tag.includes('daily ai gift') ||
+    tag.includes('ai gift') ||
+    tag === 'first breath' ||
+    id.startsWith('daily-ai-') ||
+    id.startsWith('ai-') ||
+    id === 'm-welcome' ||
+    role.includes('ai companion') ||
+    role.includes('gemini ai') ||
+    role.includes('ai mindful guide') ||
+    sub.includes('daily mindful intercession') ||
+    name === 'silas' ||
+    name === 'atlas' ||
+    name === 'luna' ||
+    name === 'maya' ||
+    name === 'orion' ||
+    name === 'aarya'
+  );
 };
 
 export const getInbox = async (req: AuthRequest, res: Response) => {
@@ -185,8 +195,9 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
     const userEmail = queryEmail || headerEmail || req.user?.email;
     const userHandle = queryHandle || headerHandle;
     const rawUserId = queryUserId || headerUserId || req.user?.id;
+    const allowAiGift = req.query.aiGift !== 'false' && req.headers['x-ai-gift'] !== 'false';
 
-    // Auto-purge messages older than 15 days before serving
+    // Auto-purge messages older than 48 hours before serving
     await purgeExpiredMessages();
 
     // Resolve current user in DB
@@ -229,13 +240,11 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
         .catch(() => []);
 
       for (const m of dbMessages) {
-        const tag = (m.tag || '').toLowerCase();
-        const title = (m.title || '').toLowerCase();
-        const isStreak = tag.includes('streak') || tag.includes('pact') || title.includes('streak') || title.includes('pact');
-        const elapsedDays = Math.floor(
-          (Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+        const elapsedHours = Math.floor(
+          (Date.now() - new Date(m.createdAt).getTime()) / (1000 * 60 * 60)
         );
-        const daysLeft = isStreak ? 999 : Math.max(0, 7 - elapsedDays);
+        const hoursLeft = Math.max(0, 48 - elapsedHours);
+        const daysLeft = Math.ceil(hoursLeft / 24);
 
         let cleanAvatar = m.sender?.avatarUrl || '';
         if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
@@ -266,10 +275,6 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
 
     // 2. Fetch and merge in-memory messages targeted to this user or 'all'
     for (const m of inMemoryMessages) {
-      const tag = (m.tag || '').toLowerCase();
-      const title = (m.title || '').toLowerCase();
-      const isStreak = tag.includes('streak') || tag.includes('pact') || title.includes('streak') || title.includes('pact');
-
       const isTargeted =
         m.receiverId === 'all' ||
         m.receiverId === currentId ||
@@ -290,10 +295,11 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
       if (isTargeted && !messagesMap.has(m.id)) {
         let createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
         if (isNaN(createdDate.getTime())) createdDate = new Date();
-        const elapsedDays = Math.floor(
-          (Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24)
+        const elapsedHours = Math.floor(
+          (Date.now() - createdDate.getTime()) / (1000 * 60 * 60)
         );
-        const daysLeft = isStreak ? 999 : Math.max(0, 7 - elapsedDays);
+        const hoursLeft = Math.max(0, 48 - elapsedHours);
+        const daysLeft = Math.ceil(hoursLeft / 24);
 
         let cleanAvatar = m.avatarUrl || m.senderAvatarUrl || '';
         if (cleanAvatar.includes('photo-1534528741775')) cleanAvatar = '';
@@ -307,8 +313,17 @@ export const getInbox = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // If still empty and no friend messages exist, provide initial gentle welcome pause
-    if (messagesMap.size === 0) {
+    // If user has toggled daily AI gift OFF, filter out all AI-generated pauses
+    if (!allowAiGift) {
+      for (const [id, msg] of messagesMap.entries()) {
+        if (isAiMsg(msg)) {
+          messagesMap.delete(id);
+        }
+      }
+    }
+
+    // If still empty and no friend messages exist, provide initial gentle welcome pause ONLY if AI gift is allowed
+    if (messagesMap.size === 0 && allowAiGift) {
       for (const m of INITIAL_MOCK_MESSAGES) {
         messagesMap.set(m.id, m);
       }
@@ -381,7 +396,7 @@ export const sendPause = async (req: AuthRequest, res: Response) => {
       steppedAwayEarly: false,
       timestamp: 'Just now',
       createdAt: now.toISOString(),
-      expiresInDays: isStreakMsg ? 999 : 7,
+      expiresInDays: 2,
       sender: {
         id: validSenderId,
         name: senderName,

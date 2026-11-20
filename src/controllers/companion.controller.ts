@@ -158,7 +158,10 @@ No hashtags, no emojis, no hype, just pure stillness.`;
 
 export const getDailyCompanionPause = async (req: Request, res: Response) => {
   try {
-    const { companionName, userId } = req.body;
+    const { companionName, userId, aiGift } = req.body;
+    if (aiGift === false || req.query.aiGift === 'false' || req.headers['x-ai-gift'] === 'false') {
+      return res.status(200).json({ message: 'Daily AI gift disabled by user preference' });
+    }
 
     // Rotate companion daily based on current day of year
     const now = new Date();
@@ -336,7 +339,7 @@ Respond ONLY with valid JSON in this exact format:
       steppedAwayEarly: false,
       timestamp: 'Just now',
       createdAt: now.toISOString(),
-      expiresInDays: 7,
+      expiresInDays: 2,
     };
 
     // Save to database if Prisma is connected
